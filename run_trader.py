@@ -23,7 +23,7 @@ logging.getLogger('ib_insync.ticker').setLevel(logging.WARNING)
 
 # Import from autotrader modules
 from autotrader.core.connection import IBConnection, Option, suppress_ib_logs
-from autotrader.core.processing import SimpleOptionsStrategy, print_stock_summary, format_currency, format_percentage
+from autotrader.core.processing import SimpleOptionsStrategy, print_stock_summary, format_currency, format_percentage, open_in_browser
 from autotrader.core.utils import get_closest_friday, get_next_monthly_expiration, setup_logging, rotate_reports
 from autotrader.config import Config
 
@@ -102,142 +102,138 @@ def main():
         # Initialize options strategy engine
         strategy = SimpleOptionsStrategy(ib_connection, config.to_dict())
         
-        # Get portfolio data for position-aware recommendations
-        portfolio = ib_connection.get_portfolio()
-        if portfolio:
-            logger.debug(f"Retrieved portfolio with {len(portfolio.get('positions', []))} positions")
-            
-            # Display portfolio summary
-            print("\n=== PORTFOLIO SUMMARY ===")
-            print(f"Account: {portfolio.get('account_id', 'Unknown')}")
-            print(f"Available Cash: {format_currency(portfolio.get('available_cash', 0))}")
-            print(f"Net Liquidation Value: {format_currency(portfolio.get('net_liquidation_value', 0))}")
-            
-            # Extract tickers from portfolio positions if no tickers were specified
-            portfolio_tickers = []
-            
-            if portfolio.get('positions'):
-                print("\nPositions:")
-                try:
-                    for position in portfolio.get('positions', []):
-                        if isinstance(position, dict) and 'contract' in position and hasattr(position['contract'], 'symbol'):
-                            ticker = position['contract'].symbol
-                            secType = position['contract'].secType
-                            
-                            if secType == 'STK':
-                                shares = position['position']
-                                avg_cost = position.get('avgCost', 0)
-                                market_value = position.get('marketValue', 0)
-                                pnl = position.get('unrealizedPNL', 0)
-                                
-                                # Add to portfolio tickers list
-                                if ticker not in portfolio_tickers:
-                                    portfolio_tickers.append(ticker)
-                                
-                                print(f"  {ticker}: {shares} shares @ {format_currency(avg_cost)}/share, " + 
-                                      f"Value: {format_currency(market_value)}, " + 
-                                      f"P&L: {format_currency(pnl)} ({format_percentage(pnl/market_value) if market_value else 'N/A'})")
-                        elif isinstance(position, str) and position not in portfolio_tickers:
-                            # Handle legacy format with just ticker strings
-                            portfolio_tickers.append(position)
-                            print(f"  {position}: (position details not available)")
-                except Exception as e:
-                    logger.error(f"Error: {str(e)}")
-                    logger.error(traceback.format_exc())
-            print()
-            
-            # If no tickers were specified via command line, use portfolio tickers
-            if not tickers and portfolio_tickers:
-                tickers = portfolio_tickers
-                logger.info(f"Using tickers from portfolio: {', '.join(tickers)}")
-        else:
-            logger.warning("Could not retrieve portfolio data. Proceeding with market analysis only.")
+        # Check if we were able to connect to IB and get portfolio info
+        if ib_connection.is_connected():
+            logger.info("Successfully connected to Interactive Brokers")
+            portfolio = ib_connection.get_portfolio()
+            if portfolio:
+                logger.info(f"Retrieved portfolio information for account {portfolio.get('account_id', 'Unknown')}")
+                logger.debug(f"Available cash: ${portfolio.get('available_cash', 0):.2f}")
+                logger.debug(f"Net liquidation value: ${portfolio.get('account_value', 0):.2f}")
+                
+                # Print portfolio summary
+                print("\n=== PORTFOLIO SUMMARY ===")
+                print(f"Account: {portfolio.get('account_id', 'Unknown')}")
+                print(f"Available Cash: ${portfolio.get('available_cash', 0):.2f}")
+                print(f"Net Liquidation Value: ${portfolio.get('account_value', 0):.2f}")
+                
+                # Check if we have positions
+                if portfolio.get('positions'):
+                    positions = portfolio['positions']
+                    print("\nPositions:")
+                    
+                    # Handle both dictionary and list format for positions
+                    if isinstance(positions, dict):
+                        for symbol, position in positions.items():
+                            shares = position.get('shares', 0)
+                            avg_cost = position.get('avg_cost', 0)
+                            market_value = position.get('market_value', 0)
+                            unrealized_pnl = position.get('unrealized_pnl', 0)
+                            print(f"  {symbol}: {shares} shares @ ${avg_cost:.2f}, Market Value: ${market_value:.2f}, PnL: ${unrealized_pnl:.2f}")
+                    else:
+                        # Handle list format (older format)
+                        for position in positions:
+                            if hasattr(position, 'contract') and hasattr(position, 'position'):
+                                symbol = position.contract.symbol
+                                shares = position.position
+                                avg_cost = position.averageCost if hasattr(position, 'averageCost') else 0
+                                print(f"  {symbol}: {shares} shares @ ${avg_cost:.2f}")
+                            elif isinstance(position, str):
+                                print(f"  {position}: (position details not available)")
+                
+                # Try to derive tickers from portfolio positions if none specified
+                if not tickers:
+                    portfolio_tickers = []
+                    if isinstance(portfolio.get('positions'), dict):
+                        portfolio_tickers = list(portfolio['positions'].keys())
+                    elif isinstance(portfolio.get('positions'), list):
+                        for position in portfolio['positions']:
+                            if hasattr(position, 'contract') and hasattr(position.contract, 'symbol'):
+                                portfolio_tickers.append(position.contract.symbol)
+                            elif isinstance(position, str):
+                                portfolio_tickers.append(position)
+                    
+                    if portfolio_tickers:
+                        tickers = portfolio_tickers
+                        logger.info(f"Using tickers from portfolio: {', '.join(tickers)}")
+            else:
+                logger.warning("Could not retrieve portfolio data. Proceeding with market analysis only.")
         
         # If still no tickers, show error and exit
         if not tickers:
             logger.error("No tickers specified and no positions found in portfolio. Use --tickers=SYMBOL1,SYMBOL2")
             return 1
         
-        # Process each ticker
-        all_results = []
-        for ticker in tickers:
-            logger.debug(f"Processing {ticker} with expiration {expiration_date}")
+        logger.info(f"Processing tickers in bulk: {', '.join(tickers)}")
+        
+        # Process all tickers in bulk
+        all_results = strategy.process_stocks_bulk(tickers, portfolio)
+        
+        # Display results for each ticker
+        for result in all_results:
+            ticker = result['ticker']
             
-            # Process the stock with our strategy engine
-            result = strategy.process_stock(ticker, portfolio)
+            # Print summary to console
+            print(f"\n=== {ticker} OPTIONS SUMMARY ===")
+            print(f"{ticker} Price: ${result['price']:.2f}")
             
-            if result:
-                all_results.append(result)
+            # Print position details if available
+            if result['position']['size'] != 0:
+                print("\nCURRENT POSITION:")
+                print(f"  Shares: {result['position']['size']}")
+                print(f"  Average Cost: ${result['position']['avg_cost']:.2f}")
+                print(f"  Market Value: ${result['position']['market_value']:.2f}")
+                print(f"  Unrealized P&L: ${result['position']['unrealized_pnl']:.2f}")
+            
+            # Print recommendation
+            print("\nRECOMMENDED STRATEGY:")
+            rec = result['recommendation']
+            option_type = rec['type']
+            strike = rec['strike']
+            expiration = rec['expiration']
+            action = rec['action']
+            
+            option_data = result['options']['put'] if option_type == 'PUT' else result['options']['call']
+            
+            print(f"{action} {option_type}  @ Strike ${strike:.2f} " + 
+                  (f"({(strike/result['price'] - 1)*100:.0f}%)" if option_type == 'CALL' else f"({(strike/result['price'] - 1)*100:.0f}%)"))
+            
+            # Handle None values in option data
+            bid = option_data.get('bid', 0) or 0
+            ask = option_data.get('ask', 0) or 0
+            last = option_data.get('last', 0) or 0
+            print(f"  Bid: ${bid:.2f}, Ask: ${ask:.2f}, Last: ${last:.2f}")
+            
+            # Print alternative recommendation if available
+            if 'alternative' in rec:
+                print("\nALTERNATIVE STRATEGY:")
+                alt = rec['alternative']
+                alt_type = alt['type']
+                alt_strike = alt['strike']
+                alt_action = alt['action']
                 
-                # Print summary to console
-                print(f"\n=== {ticker} OPTIONS SUMMARY ===")
-                print(f"{ticker} Price: ${result['price']:.2f}")
+                alt_option_data = result['options']['put'] if alt_type == 'PUT' else result['options']['call']
                 
-                # Print position details if available
-                if result['position']['size'] != 0:
-                    print("\nCURRENT POSITION:")
-                    print(f"  Shares: {result['position']['size']}")
-                    print(f"  Average Cost: ${result['position']['avg_cost']:.2f}")
-                    print(f"  Market Value: ${result['position']['market_value']:.2f}")
-                    print(f"  Unrealized P&L: ${result['position']['unrealized_pnl']:.2f}")
-                
-                # Print recommendation
-                print("\nRECOMMENDED STRATEGY:")
-                rec = result['recommendation']
-                option_type = rec['type']
-                strike = rec['strike']
-                expiration = rec['expiration']
-                action = rec['action']
-                
-                option_data = result['options']['put'] if option_type == 'PUT' else result['options']['call']
-                
-                print(f"{action} {option_type}  @ Strike ${strike:.2f} " + 
-                      (f"({(strike/result['price'] - 1)*100:.0f}%)" if option_type == 'CALL' else f"({(strike/result['price'] - 1)*100:.0f}%)"))
+                print(f"{alt_action} {alt_type}  @ Strike ${alt_strike:.2f} " + 
+                      (f"({(alt_strike/result['price'] - 1)*100:.0f}%)" if alt_type == 'CALL' else f"({(alt_strike/result['price'] - 1)*100:.0f}%)"))
                 
                 # Handle None values in option data
-                bid = option_data.get('bid', 0) or 0
-                ask = option_data.get('ask', 0) or 0
-                last = option_data.get('last', 0) or 0
-                print(f"  Bid: ${bid:.2f}, Ask: ${ask:.2f}, Last: ${last:.2f}")
-                
-                # Print earnings estimate if available
-                if rec.get('earnings'):
-                    earnings = rec['earnings']
-                    print(f"  Potential Earnings ({earnings['strategy']}):")
-                    print(f"  Max Contracts: {earnings['max_contracts']}")
-                    print(f"  Premium per Contract: ${earnings['premium_per_contract']:.2f}")
-                    print(f"  Total Premium: ${earnings['total_premium']:.2f}")
-                    
-                    if 'return_on_cash' in earnings:
-                        print(f"  Return on Cash: {earnings['return_on_cash']:.2f}%")
-                    elif 'return_on_capital' in earnings:
-                        print(f"  Return on Capital: {earnings['return_on_capital']:.2f}%")
-                
-                # Print alternative strategy if available
-                if 'alternative' in rec:
-                    alt = rec['alternative']
-                    alt_type = alt['type']
-                    alt_strike = alt['strike']
-                    alt_action = alt['action']
-                    
-                    alt_option_data = result['options']['put'] if alt_type == 'PUT' else result['options']['call']
-                    
-                    print(f"{alt_action} {alt_type}  @ Strike ${alt_strike:.2f} " + 
-                          (f"({(alt_strike/result['price'] - 1)*100:.0f}%)" if alt_type == 'CALL' else f"({(alt_strike/result['price'] - 1)*100:.0f}%)"))
-                    
-                    # Handle None values in option data
-                    alt_bid = alt_option_data.get('bid', 0) or 0
-                    alt_ask = alt_option_data.get('ask', 0) or 0
-                    alt_last = alt_option_data.get('last', 0) or 0
-                    print(f"  Bid: ${alt_bid:.2f}, Ask: ${alt_ask:.2f}, Last: ${alt_last:.2f}")
-            else:
-                logger.error(f"Failed to process {ticker}")
+                alt_bid = alt_option_data.get('bid', 0) or 0
+                alt_ask = alt_option_data.get('ask', 0) or 0
+                alt_last = alt_option_data.get('last', 0) or 0
+                print(f"  Bid: ${alt_bid:.2f}, Ask: ${alt_ask:.2f}, Last: ${alt_last:.2f}")
         
         # Generate HTML report
         if all_results:
             report_file = os.path.join(reports_dir, f"options_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.html")
             strategy.generate_html_report(all_results, report_file)
-            logger.debug(f"Report generated: {report_file}")
+            logger.info(f"Report generated: {report_file}")
+            
+            # Open the report in the browser
+            if open_in_browser(report_file):
+                logger.info(f"Opened report in browser: {report_file}")
+            else:
+                logger.warning(f"Failed to open report in browser: {report_file}")
             
             # Clean up old reports
             old_reports = sorted(Path(reports_dir).glob("options_report_*.html"))

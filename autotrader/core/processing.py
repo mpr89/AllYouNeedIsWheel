@@ -91,41 +91,45 @@ class SimpleOptionsStrategy:
                 
             # Check if we have a position in this stock from the portfolio
             stock_position = None
+            position_size = 0
+            avg_cost = 0
+            market_value = 0
+            unrealized_pnl = 0
+            
             if portfolio and 'positions' in portfolio:
                 try:
-                    for position in portfolio['positions']:
-                        if isinstance(position, dict) and 'contract' in position and hasattr(position['contract'], 'symbol'):
-                            if position['contract'].symbol == ticker and position['contract'].secType == 'STK':
-                                stock_position = position
-                                break
-                        elif isinstance(position, str) and position == ticker:
-                            # Legacy format where positions is a list of ticker strings
-                            logger.debug(f"Found position for {ticker} in legacy format")
-                            # Create mock position data
-                            stock_position = {
-                                'position': 100,  # Assume 100 shares
-                                'avgCost': stock_price * 0.9,  # Assume 10% below current price
-                                'marketValue': stock_price * 100,  # Current market value
-                                'unrealizedPNL': stock_price * 100 - (stock_price * 0.9 * 100)  # Simple P&L calculation
-                            }
-                            break
+                    # Try to find position in the portfolio dictionary format
+                    if isinstance(portfolio['positions'], dict) and ticker in portfolio['positions']:
+                        position_data = portfolio['positions'][ticker]
+                        position_size = position_data.get('shares', 0)
+                        avg_cost = position_data.get('avg_cost', 0)
+                        market_value = position_data.get('market_value', 0)
+                        unrealized_pnl = position_data.get('unrealized_pnl', 0)
+                        stock_position = position_data
+                    # Try to find position in the older list of positions format
+                    elif isinstance(portfolio['positions'], list):
+                        for position in portfolio['positions']:
+                            if isinstance(position, dict) and 'contract' in position and hasattr(position['contract'], 'symbol'):
+                                if position['contract'].symbol == ticker and position['contract'].secType == 'STK':
+                                    stock_position = position
+                                    position_size = position.get('position', 0)
+                                    avg_cost = position.get('averageCost', 0)
+                                    market_value = position.get('marketValue', 0)
+                                    unrealized_pnl = position.get('unrealizedPNL', 0)
+                                    break
+                            elif isinstance(position, str) and position == ticker:
+                                # Legacy format where positions is a list of ticker strings
+                                logger.debug(f"Found position for {ticker} in legacy format")
+                                # Don't create mock position data anymore
+                                pass
                 except Exception as e:
                     logger.warning(f"Error checking portfolio positions: {e}")
                     stock_position = None
             
             # Determine strategy based on position
             strategy = "NEUTRAL"  # Default strategy
-            position_size = 0
-            avg_cost = 0
-            market_value = 0
-            unrealized_pnl = 0
             
             if stock_position:
-                position_size = stock_position['position']
-                avg_cost = stock_position['avgCost'] if 'avgCost' in stock_position else 0
-                market_value = stock_position['marketValue'] if 'marketValue' in stock_position else 0
-                unrealized_pnl = stock_position['unrealizedPNL'] if 'unrealizedPNL' in stock_position else 0
-                
                 # Decide strategy based on position
                 if position_size > 0:
                     strategy = "BULLISH"  # We own the stock, sell calls
@@ -309,6 +313,262 @@ class SimpleOptionsStrategy:
             logger.error(f"Error generating HTML report: {str(e)}")
             logger.error(traceback.format_exc())
             return None
+
+    def process_stocks_bulk(self, tickers, portfolio=None):
+        """
+        Process multiple stocks in bulk to find option trade recommendations
+        
+        Args:
+            tickers (list): List of stock ticker symbols
+            portfolio (dict, optional): Portfolio data from IB. Defaults to None.
+            
+        Returns:
+            list: List of dictionaries with stock and option data and recommendations
+        """
+        if not tickers:
+            logger.warning("No tickers provided for bulk processing")
+            return []
+            
+        logger.info(f"Processing {len(tickers)} tickers in bulk: {', '.join(tickers)}")
+        
+        # Get all stock prices in one request
+        logger.info("Fetching stock prices for all tickers...")
+        stock_prices = self.ib_connection.get_multiple_stock_prices(tickers)
+        if not stock_prices:
+            logger.error("Failed to get stock prices")
+            return []
+            
+        logger.info(f"Successfully retrieved {len(stock_prices)} stock prices")
+        
+        # Determine the expiration date for options
+        if self.config.get('use_monthly_options', False):
+            expiration = get_next_monthly_expiration()
+        else:
+            expiration = get_closest_friday().strftime('%Y%m%d')
+            
+        logger.info(f"Using option expiration date: {expiration}")
+        
+        # Prepare strikes for each ticker
+        put_otm_pct = self.config.get('put_otm_percentage', 20)
+        call_otm_pct = self.config.get('call_otm_percentage', 20)
+        
+        strikes_map = {}
+        valid_tickers = []
+        for ticker, price in stock_prices.items():
+            if price is None or math.isnan(price):
+                logger.warning(f"Could not get price for {ticker}, skipping")
+                continue
+                
+            # Calculate option strike prices at specified percentages
+            put_strike = self._adjust_to_standard_strike(price * (1 - put_otm_pct/100))
+            call_strike = self._adjust_to_standard_strike(price * (1 + call_otm_pct/100))
+            
+            strikes_map[ticker] = [put_strike, call_strike]
+            valid_tickers.append(ticker)
+        
+        logger.info(f"Calculated strike prices for {len(strikes_map)} tickers")
+        
+        # Get option prices for all tickers and strikes in one batch
+        logger.info("Fetching option prices for all tickers and strikes...")
+        all_option_data = self.ib_connection.get_multiple_stocks_option_prices(
+            valid_tickers, 
+            expiration, 
+            strikes_map=strikes_map
+        )
+        
+        logger.info(f"Successfully retrieved option data for {len(all_option_data)} tickers")
+        
+        # Process each ticker with the data we've gathered
+        results = []
+        for i, ticker in enumerate(valid_tickers):
+            logger.info(f"Processing data for {ticker} ({i+1}/{len(valid_tickers)})")
+            if ticker not in stock_prices or stock_prices[ticker] is None:
+                continue
+                
+            try:
+                stock_price = stock_prices[ticker]
+                
+                # Get the strikes for this ticker
+                if ticker not in strikes_map:
+                    continue
+                
+                put_strike, call_strike = strikes_map[ticker]
+                
+                # Check if we have a position in this stock from the portfolio
+                stock_position = None
+                position_size = 0
+                avg_cost = 0
+                market_value = 0
+                unrealized_pnl = 0
+                
+                if portfolio and 'positions' in portfolio:
+                    # Try to find position in the portfolio dictionary format
+                    if isinstance(portfolio['positions'], dict) and ticker in portfolio['positions']:
+                        position_data = portfolio['positions'][ticker]
+                        position_size = position_data.get('shares', 0)
+                        avg_cost = position_data.get('avg_cost', 0)
+                        market_value = position_data.get('market_value', 0)
+                        unrealized_pnl = position_data.get('unrealized_pnl', 0)
+                        stock_position = position_data
+                    # Try to find position in the older list of positions format
+                    elif isinstance(portfolio['positions'], list):
+                        for position in portfolio['positions']:
+                            if isinstance(position, dict) and 'contract' in position and hasattr(position['contract'], 'symbol'):
+                                if position['contract'].symbol == ticker and position['contract'].secType == 'STK':
+                                    stock_position = position
+                                    position_size = position.get('position', 0)
+                                    avg_cost = position.get('averageCost', 0)
+                                    market_value = position.get('marketValue', 0)
+                                    unrealized_pnl = position.get('unrealizedPNL', 0)
+                                    break
+                            elif isinstance(position, str) and position == ticker:
+                                # Legacy format where positions is a list of ticker strings
+                                logger.debug(f"Found position for {ticker} in legacy format")
+                                # Don't create mock position data anymore - use real portfolio data
+                                pass
+                
+                # Extract option data for this ticker
+                put_data = None
+                call_data = None
+                
+                if ticker in all_option_data:
+                    ticker_options = all_option_data[ticker]
+                    for option_key, option_data in ticker_options.items():
+                        # Option key is a tuple of (strike, right)
+                        strike, right = option_key
+                        if right == 'P' and abs(strike - put_strike) < 0.01:
+                            put_data = option_data
+                        elif right == 'C' and abs(strike - call_strike) < 0.01:
+                            call_data = option_data
+                
+                # If options data not found in bulk, try individual requests as fallback
+                if put_data is None:
+                    put_contract = self.ib_connection.create_option_contract(ticker, expiration, put_strike, 'P')
+                    put_data = self.ib_connection.get_option_price(put_contract)
+                
+                if call_data is None:
+                    call_contract = self.ib_connection.create_option_contract(ticker, expiration, call_strike, 'C')
+                    call_data = self.ib_connection.get_option_price(call_contract)
+                
+                # Determine strategy based on position
+                strategy = "NEUTRAL"  # Default strategy
+                
+                if stock_position:
+                    # Decide strategy based on position
+                    if position_size > 0:
+                        strategy = "BULLISH"  # We own the stock, sell calls
+                    elif position_size < 0:
+                        strategy = "BEARISH"  # We are short the stock, sell puts
+                
+                # Calculate potential earnings for options
+                put_earnings = None
+                call_earnings = None
+                
+                if put_data and 'bid' in put_data and put_data['bid'] is not None:
+                    # For cash-secured puts
+                    max_contracts = math.floor(self.config.get('max_position_value', 20000) / (put_strike * 100))
+                    premium_per_contract = put_data['bid'] * 100  # Convert to dollar amount
+                    total_premium = premium_per_contract * max_contracts
+                    return_on_cash = (total_premium / (put_strike * 100 * max_contracts)) * 100 if max_contracts > 0 else 0
+                    
+                    put_earnings = {
+                        'strategy': 'Cash-Secured Put',
+                        'max_contracts': max_contracts,
+                        'premium_per_contract': premium_per_contract,
+                        'total_premium': total_premium,
+                        'return_on_cash': return_on_cash
+                    }
+                
+                if call_data and 'bid' in call_data and call_data['bid'] is not None and position_size > 0:
+                    # For covered calls (only if we own the stock)
+                    max_contracts = math.floor(abs(position_size) / 100)  # Each contract covers 100 shares
+                    premium_per_contract = call_data['bid'] * 100  # Convert to dollar amount
+                    total_premium = premium_per_contract * max_contracts
+                    return_on_capital = (total_premium / (stock_price * 100 * max_contracts)) * 100 if max_contracts > 0 else 0
+                    
+                    call_earnings = {
+                        'strategy': 'Covered Call',
+                        'max_contracts': max_contracts,
+                        'premium_per_contract': premium_per_contract,
+                        'total_premium': total_premium,
+                        'return_on_capital': return_on_capital
+                    }
+                
+                # Create recommendation based on portfolio position
+                recommendation = {}
+                
+                if strategy == "BULLISH" and position_size > 0:
+                    # We own the stock, recommend selling calls
+                    recommendation = {
+                        'action': 'SELL',
+                        'type': 'CALL',
+                        'strike': call_strike,
+                        'expiration': expiration,
+                        'earnings': call_earnings
+                    }
+                elif strategy == "BEARISH" and position_size < 0:
+                    # We are short the stock, recommend selling puts
+                    recommendation = {
+                        'action': 'SELL',
+                        'type': 'PUT',
+                        'strike': put_strike,
+                        'expiration': expiration,
+                        'earnings': put_earnings
+                    }
+                else:
+                    # Neutral strategy or no position
+                    # For simplicity, recommend selling puts as it requires less capital than buying stock
+                    recommendation = {
+                        'action': 'SELL',
+                        'type': 'PUT',
+                        'strike': put_strike,
+                        'expiration': expiration,
+                        'earnings': put_earnings
+                    }
+                    
+                    # Also include call option as a bullish alternative
+                    recommendation['alternative'] = {
+                        'action': 'BUY',
+                        'type': 'CALL',
+                        'strike': call_strike,
+                        'expiration': expiration
+                    }
+                
+                # Build and return the result
+                result = {
+                    'ticker': ticker,
+                    'price': stock_price,
+                    'strategy': strategy,
+                    'position': {
+                        'size': position_size,
+                        'avg_cost': avg_cost,
+                        'market_value': market_value,
+                        'unrealized_pnl': unrealized_pnl
+                    },
+                    'options': {
+                        'expiration': expiration,
+                        'put': {
+                            'strike': put_strike,
+                            'bid': put_data['bid'] if put_data and 'bid' in put_data else None,
+                            'ask': put_data['ask'] if put_data and 'ask' in put_data else None,
+                            'last': put_data['last'] if put_data and 'last' in put_data else None
+                        },
+                        'call': {
+                            'strike': call_strike,
+                            'bid': call_data['bid'] if call_data and 'bid' in call_data else None,
+                            'ask': call_data['ask'] if call_data and 'ask' in call_data else None,
+                            'last': call_data['last'] if call_data and 'last' in call_data else None
+                        }
+                    },
+                    'recommendation': recommendation
+                }
+                
+                results.append(result)
+            except Exception as e:
+                logger.error(f"Error processing {ticker} in bulk: {str(e)}")
+                logger.error(traceback.format_exc())
+        
+        return results
 
 def print_stock_summary(stock_data):
     """

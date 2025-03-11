@@ -769,8 +769,9 @@ class IBConnection:
         
         Returns:
             dict: Dictionary containing account information and positions
-                - account_value: Total account value
+                - account_id: Account ID
                 - available_cash: Available cash for trading
+                - account_value: Total account value (net liquidation)
                 - positions: Dictionary of current positions, keyed by symbol
                     - Each position contains: shares, avg_cost, market_value, etc.
         """
@@ -785,7 +786,12 @@ class IBConnection:
             account_values = self.ib.accountSummary(account_id)
             
             # Extract relevant account information
-            account_info = {}
+            account_info = {
+                'account_id': account_id,
+                'available_cash': 0,
+                'account_value': 0
+            }
+            
             for av in account_values:
                 if av.tag == 'TotalCashValue':
                     account_info['available_cash'] = float(av.value)
@@ -810,9 +816,21 @@ class IBConnection:
                     'contract': position.contract
                 }
             
+            if not positions and self.readonly:
+                # When in read-only mode, we might not get real positions
+                # In this case, return the raw portfolio for backwards compatibility
+                logger.debug("No positions found, returning raw portfolio data for backwards compatibility")
+                return {
+                    'account_id': account_id,
+                    'available_cash': account_info.get('available_cash', 0),
+                    'account_value': account_info.get('account_value', 0),
+                    'positions': portfolio  # Return the raw portfolio for backwards compatibility
+                }
+            
             return {
-                'account_value': account_info.get('account_value', 0),
+                'account_id': account_id,
                 'available_cash': account_info.get('available_cash', 0),
+                'account_value': account_info.get('account_value', 0),
                 'positions': positions
             }
         
