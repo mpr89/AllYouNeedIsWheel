@@ -45,7 +45,7 @@ DEFAULT_CONFIG = {
 def main():
     parser = argparse.ArgumentParser(description='AutoTrader - Automated Options Trading Helper')
     parser.add_argument('--config', type=str, help='Path to configuration file')
-    parser.add_argument('--tickers', type=str, help='Comma-separated stock tickers to analyze')
+    parser.add_argument('--tickers', type=str, help='Optional: Comma-separated stock tickers to analyze. If not provided, tickers will be derived from portfolio positions.')
     parser.add_argument('--interval', type=int, help='Strike price interval')
     parser.add_argument('--monthly', action='store_true', help='Use monthly options expiration')
     parser.add_argument('--strikes', type=int, help='Number of strikes to analyze on each side')
@@ -70,9 +70,7 @@ def main():
     tickers = []
     if args.tickers:
         tickers = [t.strip().upper() for t in args.tickers.split(',')]
-    else:
-        logger.error("No tickers specified. Use --tickers=SYMBOL1,SYMBOL2")
-        return 1
+    # We'll set tickers from portfolio later if none provided
         
     # Determine expiration date
     use_monthly = args.monthly or config.get('use_monthly_options', False)
@@ -115,6 +113,9 @@ def main():
             print(f"Available Cash: {format_currency(portfolio.get('available_cash', 0))}")
             print(f"Net Liquidation Value: {format_currency(portfolio.get('net_liquidation_value', 0))}")
             
+            # Extract tickers from portfolio positions if no tickers were specified
+            portfolio_tickers = []
+            
             if portfolio.get('positions'):
                 print("\nPositions:")
                 try:
@@ -129,18 +130,34 @@ def main():
                                 market_value = position.get('marketValue', 0)
                                 pnl = position.get('unrealizedPNL', 0)
                                 
+                                # Add to portfolio tickers list
+                                if ticker not in portfolio_tickers:
+                                    portfolio_tickers.append(ticker)
+                                
                                 print(f"  {ticker}: {shares} shares @ {format_currency(avg_cost)}/share, " + 
                                       f"Value: {format_currency(market_value)}, " + 
                                       f"P&L: {format_currency(pnl)} ({format_percentage(pnl/market_value) if market_value else 'N/A'})")
-                        else:
-                            logger.warning(f"Unexpected position format: {position}")
+                        elif isinstance(position, str) and position not in portfolio_tickers:
+                            # Handle legacy format with just ticker strings
+                            portfolio_tickers.append(position)
+                            print(f"  {position}: (position details not available)")
                 except Exception as e:
                     logger.error(f"Error: {str(e)}")
                     logger.error(traceback.format_exc())
             print()
+            
+            # If no tickers were specified via command line, use portfolio tickers
+            if not tickers and portfolio_tickers:
+                tickers = portfolio_tickers
+                logger.info(f"Using tickers from portfolio: {', '.join(tickers)}")
         else:
             logger.warning("Could not retrieve portfolio data. Proceeding with market analysis only.")
-            
+        
+        # If still no tickers, show error and exit
+        if not tickers:
+            logger.error("No tickers specified and no positions found in portfolio. Use --tickers=SYMBOL1,SYMBOL2")
+            return 1
+        
         # Process each ticker
         all_results = []
         for ticker in tickers:
