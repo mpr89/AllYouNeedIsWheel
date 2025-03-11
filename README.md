@@ -1,33 +1,44 @@
 # Auto-Trader
 
-An automated trading system designed for options trading on Interactive Brokers (IBKR).
+A simple automated trading system for options trading on Interactive Brokers (IBKR).
 
 ## Overview
 
-This system provides algorithmic trading capabilities for options contracts using the Interactive Brokers API. It enables automated execution of option trading strategies with customizable parameters and risk management.
+Auto-Trader is a lightweight tool that connects to Interactive Brokers to automate basic options trading strategies. It focuses on simplicity and reliability for options sellers.
 
 ## Features
 
-- **Direct IBKR Integration**: Connect to Interactive Brokers' TWS or IB Gateway
-- **Options Chain Analysis**: Scan and analyze options chains for trading opportunities
-- **Strategy Implementation**: 
-  - Delta-neutral strategies
-  - Vertical spreads (bull/bear)
-  - Iron condors and butterflies
-  - Covered calls and cash-secured puts
-- **Risk Management**: Position sizing, stop-loss, and take-profit automation
-- **Market Analysis**: Technical indicators and volatility analysis
-- **Backtesting**: Test strategies against historical data
+### Core Trading System
+- **IBKR Integration**: Connection to Interactive Brokers' TWS or IB Gateway
+- **Basic Options Strategies**: 
+  - Selling put options (cash-secured puts)
+  - Selling call options (covered calls)
+- **Backtesting**: Test your strategies with historical data before risking real capital
+- **Trade Logging**: All trades are logged in SQLite database for performance review
+
+### Technical Stack
+- **Language**: Python
+- **IBKR Connectivity**: ib_insync for API connection
+- **Database**: SQLite for trade logging
+- **Automation**: Basic scheduled execution via cron (Linux/macOS)
 
 ## Requirements
 
 - Interactive Brokers account
-- IBKR TWS or IB Gateway
-- API credentials
+- IBKR Trader Workstation (TWS) or IB Gateway
+- API credentials from Interactive Brokers
+- Python 3.8+
 
 ## Getting Started
 
-Detailed setup and usage instructions coming soon.
+Detailed setup and usage instructions coming soon. The project is currently under development.
+
+## Roadmap
+
+### Phase 1: Core Trading System
+- Simple put and call selling functionality
+- Basic backtesting capabilities
+- Trade logging in SQLite
 
 ## Disclaimer
 
