@@ -371,6 +371,32 @@ def export_options_data(stock_price, expiration, call_options, put_options, form
     
     return results
 
+def process_option_data(option_data, field):
+    """
+    Process option data to get a value for display, using last price as fallback
+    
+    Args:
+        option_data (dict): Option data containing bid, ask, last
+        field (str): Field to get ('bid', 'ask')
+        
+    Returns:
+        str: Formatted price string
+    """
+    # Use the specified field if available
+    if field in option_data and not (option_data[field] == 'N/A' or 
+                                    (isinstance(option_data[field], str) and option_data[field].startswith('$0')) or
+                                    (isinstance(option_data[field], (int, float)) and option_data[field] <= 0)):
+        return option_data[field]
+    
+    # Fall back to last price if main field not available
+    if 'last' in option_data and not (option_data['last'] == 'N/A' or 
+                                    (isinstance(option_data['last'], str) and option_data['last'].startswith('$0')) or
+                                    (isinstance(option_data['last'], (int, float)) and option_data['last'] <= 0)):
+        return option_data['last']
+    
+    # If nothing available
+    return 'N/A'
+
 def create_combined_html_report(stocks_data, expiration, output_dir='reports'):
     """
     Create a combined HTML report for multiple stocks
@@ -574,10 +600,15 @@ def create_combined_html_report(stocks_data, expiration, output_dir='reports'):
             # Add call data if available
             if strike in call_options:
                 call = call_options[strike]
+                # Process values to show last price as fallback
+                bid_val = process_option_data(call, 'bid')
+                ask_val = process_option_data(call, 'ask')
+                last_val = call['last']
+                
                 html_content += f"""
-                            <td>{call['bid']}</td>
-                            <td>{call['ask']}</td>
-                            <td>{call['last']}</td>
+                            <td>{bid_val}</td>
+                            <td>{ask_val}</td>
+                            <td>{last_val}</td>
                 """
             else:
                 html_content += """
@@ -589,10 +620,15 @@ def create_combined_html_report(stocks_data, expiration, output_dir='reports'):
             # Add put data if available
             if strike in put_options:
                 put = put_options[strike]
+                # Process values to show last price as fallback
+                bid_val = process_option_data(put, 'bid')
+                ask_val = process_option_data(put, 'ask')
+                last_val = put['last']
+                
                 html_content += f"""
-                            <td>{put['bid']}</td>
-                            <td>{put['ask']}</td>
-                            <td>{put['last']}</td>
+                            <td>{bid_val}</td>
+                            <td>{ask_val}</td>
+                            <td>{last_val}</td>
                 """
             else:
                 html_content += """

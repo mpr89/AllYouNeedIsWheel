@@ -248,43 +248,39 @@ def export_all_stocks_data(stocks_data, expiration, format='all', output_dir='re
     # Create timestamp for filenames
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     
-    # Export individual stock files
-    for stock_data in stocks_data:
-        ticker = stock_data['ticker']
-        stock_price = stock_data['stock_price']
-        call_options = stock_data['call_options']
-        put_options = stock_data['put_options']
-        
-        # Export individual stock data
-        stock_export_results = export_options_data(
-            stock_price,
-            expiration,
-            call_options,
-            put_options,
-            format=format,
-            output_dir=output_dir,
-            prefix=f"{ticker.lower()}_"
-        )
-        
-        # Store results
-        for format_type, path in stock_export_results.items():
-            if format_type not in export_results:
-                export_results[format_type] = []
-            export_results[format_type].append(path)
+    # Export individual CSV files
+    if format.lower() in ['csv', 'all']:
+        for stock_data in stocks_data:
+            ticker = stock_data['ticker']
+            stock_price = stock_data['stock_price']
+            call_options = stock_data['call_options']
+            put_options = stock_data['put_options']
+            
+            # Export individual stock data to CSV
+            csv_filename = os.path.join(output_dir, f"{ticker.lower()}_options_data_{timestamp}.csv")
+            csv_path = export_to_csv(
+                stock_price,
+                expiration,
+                call_options,
+                put_options,
+                filename=csv_filename
+            )
+            
+            # Store results
+            if 'csv' not in export_results:
+                export_results['csv'] = []
+            export_results['csv'].append(csv_path)
     
     # Create combined HTML report if HTML format is requested
-    if format.lower() in ['html', 'all'] and len(stocks_data) > 1:
+    if format.lower() in ['html', 'all']:
+        from autotrader.core import create_combined_html_report
         combined_html_path = create_combined_html_report(
             stocks_data,
             expiration,
             output_dir=output_dir
         )
         # Add combined report to results
-        if 'html' not in export_results:
-            export_results['html'] = []
-        export_results['html'].append(combined_html_path)
-        # Add a special key for the combined report
-        export_results['combined_html'] = combined_html_path
+        export_results['html'] = [combined_html_path]
     
     return export_results
 
