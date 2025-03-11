@@ -17,7 +17,8 @@ from autotrader.core import (
     print_stock_summary,
     export_all_stocks_data,
     create_combined_html_report,
-    open_in_browser
+    open_in_browser,
+    get_next_monthly_expiration
 )
 
 # Set up logging
@@ -30,60 +31,78 @@ def main():
     # Setup argument parser
     parser = argparse.ArgumentParser(description="Run the stock option trader.")
     parser.add_argument("--tickers", help="Comma-separated list of stock tickers to process", default="NVDA,TSLA,AAPL")
-    parser.add_argument("--port", type=int, help="TWS port", default=7497)
-    parser.add_argument("--host", help="TWS host", default="127.0.0.1")
-    parser.add_argument("--interval", type=int, help="Strike price interval", default=5)
-    parser.add_argument("--num_strikes", type=int, help="Number of strikes around current price", default=2)
-    parser.add_argument("--expiration_date", help="Expiration date in format YYYYMMDD", default="20250321")
-    parser.add_argument("--output_dir", help="Directory for output files", default="reports")
-    parser.add_argument("--export_format", help="Export format: csv, html, or all", default="html")
-    parser.add_argument("--no_browser", action="store_true", help="Don't open report in browser")
+    parser.add_argument("--interval", type=float, help="Strike price interval", default=5.0)
+    parser.add_argument("--num_strikes", type=int, help="Number of strikes to fetch around current price", default=5)
+    parser.add_argument("--days", type=int, help="Days to expiration (defaults to closest Friday)", default=None)
+    parser.add_argument("--ib_host", help="IB TWS/Gateway host", default="127.0.0.1")
+    parser.add_argument("--ib_port", type=int, help="IB TWS/Gateway port", default=7497)
+    parser.add_argument("--output_dir", help="Directory to save output files", default="reports")
+    parser.add_argument("--no_browser", action="store_true", help="Disable automatic opening of report in browser")
+    
     args = parser.parse_args()
     
-    # Parse tickers list
-    tickers = [ticker.strip() for ticker in args.tickers.split(',')]
+    # Split tickers
+    tickers = [t.strip() for t in args.tickers.split(',')]
     
-    logger.info(f"Starting options reader for tickers: {', '.join(tickers)}...")
-    
-    # Initialize connection to IB
-    ib = IBConnection(readonly=True, host=args.host, port=args.port)
-    
-    # List to store all stock data
-    all_stocks_data = []
+    # Create IB connection
+    ib = IBConnection(host=args.ib_host, port=args.ib_port, readonly=True)
     
     try:
         # Connect to IB
+        logger.info(f"Connecting to IB on {args.ib_host}:{args.ib_port}")
         if not ib.connect():
-            logger.error("Failed to connect to IB. Make sure TWS/IB Gateway is running and API connections are enabled.")
+            logger.error("Failed to connect to IB")
             return
         
         logger.info("Successfully connected to IB")
         
-        # Get stock prices for all tickers in a batch
-        logger.info(f"Getting stock prices for all tickers in batch: {', '.join(tickers)}")
+        # Get current date and target expiration date
+        today = datetime.now().date()
+        
+        # Determine expiration date
+        if args.days:
+            # Use specified days to expiration
+            expiration_date = (today + timedelta(days=args.days)).strftime('%Y%m%d')
+        else:
+            # Use the closest monthly expiration date
+            expiration_date = get_next_monthly_expiration()
+            
+        logger.info(f"Using expiration date: {expiration_date}")
+        
+        # Fetch portfolio data
+        logger.info("Fetching portfolio data...")
+        portfolio = ib.get_portfolio()
+        if portfolio:
+            logger.info(f"Portfolio value: ${portfolio['account_value']:.2f}")
+            logger.info(f"Available cash: ${portfolio['available_cash']:.2f}")
+            logger.info(f"Positions: {len(portfolio['positions'])} stocks")
+        else:
+            logger.warning("Could not retrieve portfolio data")
+            portfolio = {
+                'account_value': 0,
+                'available_cash': 0,
+                'positions': {}
+            }
+            
+        # Get stock prices for all tickers at once
         stock_prices = ib.get_multiple_stock_prices(tickers)
         
-        # Filter valid tickers that have prices
-        valid_tickers = []
-        for ticker, price in stock_prices.items():
-            if price is not None:
-                logger.info(f"{ticker} current price: ${price}")
-                valid_tickers.append(ticker)
-            else:
-                logger.error(f"Failed to get {ticker} stock price, skipping...")
-        
-        # Use the expiration date specified
-        expiration_date = args.expiration_date
-        
-        # Process each ticker
-        for ticker in valid_tickers:
+        # Process each stock
+        all_stocks_data = []
+        for ticker in tickers:
+            if ticker not in stock_prices or stock_prices[ticker] is None:
+                logger.warning(f"Could not get price for {ticker}, skipping")
+                continue
+                
+            logger.info(f"Processing {ticker} at ${stock_prices[ticker]:.2f}")
             stock_data = process_stock(
                 ib, 
                 ticker, 
                 expiration_date, 
                 args.interval, 
                 args.num_strikes, 
-                stock_prices[ticker]
+                stock_prices[ticker],
+                portfolio
             )
             
             if stock_data:

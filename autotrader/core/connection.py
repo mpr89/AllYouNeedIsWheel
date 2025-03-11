@@ -18,7 +18,7 @@ class IBConnection:
     """
     Class for managing connection to Interactive Brokers
     """
-    def __init__(self, host='127.0.0.1', port=7497, client_id=1, timeout=20, readonly=False):
+    def __init__(self, host='127.0.0.1', port=7497, client_id=1, timeout=20, readonly=True):
         """
         Initialize the IB connection
         
@@ -609,4 +609,109 @@ class IBConnection:
         """
         from ib_insync import Option
         contract = Option(ticker, expiration_date, strike, right, 'SMART', '100', 'USD')
-        return contract 
+        return contract
+
+    def get_portfolio(self):
+        """
+        Get current portfolio positions and account information from IB
+        
+        Returns:
+            dict: Dictionary containing account information and positions
+                - account_value: Total account value
+                - available_cash: Available cash for trading
+                - positions: Dictionary of current positions, keyed by symbol
+                    - Each position contains: shares, avg_cost, market_value, etc.
+        """
+        if not self.is_connected():
+            logger.warning("Not connected to IB. Attempting to connect...")
+            if not self.connect():
+                return None
+        
+        try:
+            # If in readonly mode, return mock data for demo purposes
+            if self.readonly:
+                logger.info("Using mock portfolio data (readonly mode)")
+                # Create mock positions for common stocks
+                mock_positions = {}
+                mock_stocks = {
+                    'AAPL': {'price': 150.0, 'shares': 100},
+                    'TSLA': {'price': 220.0, 'shares': 50},
+                    'NVDA': {'price': 100.0, 'shares': 200},
+                    'MSFT': {'price': 380.0, 'shares': 75},
+                    'AMZN': {'price': 190.0, 'shares': 60},
+                    'GOOG': {'price': 165.0, 'shares': 40}
+                }
+                
+                # Get stock prices for positions that exist
+                for symbol, data in mock_stocks.items():
+                    # Try to get current price if available
+                    current_price = None
+                    try:
+                        # First try to get live price
+                        current_price = self.get_stock_price(symbol)
+                    except:
+                        pass
+                        
+                    # If we couldn't get a live price, use the mock price
+                    if current_price is None:
+                        current_price = data['price']
+                        
+                    shares = data['shares']
+                    avg_cost = current_price * 0.9  # Mock average cost below current price
+                    market_value = current_price * shares
+                    unrealized_pnl = market_value - (avg_cost * shares)
+                    
+                    mock_positions[symbol] = {
+                        'shares': shares,
+                        'avg_cost': avg_cost,
+                        'market_price': current_price,
+                        'market_value': market_value,
+                        'unrealized_pnl': unrealized_pnl,
+                        'realized_pnl': 0
+                    }
+                
+                return {
+                    'account_value': 500000.0,
+                    'available_cash': 100000.0,
+                    'positions': mock_positions
+                }
+            
+            # Get account summary
+            account_id = self.ib.managedAccounts()[0]
+            account_values = self.ib.accountSummary(account_id)
+            
+            # Extract relevant account information
+            account_info = {}
+            for av in account_values:
+                if av.tag == 'TotalCashValue':
+                    account_info['available_cash'] = float(av.value)
+                elif av.tag == 'NetLiquidation':
+                    account_info['account_value'] = float(av.value)
+            
+            # Get positions
+            portfolio = self.ib.portfolio()
+            positions = {}
+            
+            for position in portfolio:
+                symbol = position.contract.symbol
+                market_price = position.marketPrice
+                
+                positions[symbol] = {
+                    'shares': position.position,
+                    'avg_cost': position.averageCost,
+                    'market_price': market_price,
+                    'market_value': position.marketValue,
+                    'unrealized_pnl': position.unrealizedPNL,
+                    'realized_pnl': position.realizedPNL,
+                    'contract': position.contract
+                }
+            
+            return {
+                'account_value': account_info.get('account_value', 0),
+                'available_cash': account_info.get('available_cash', 0),
+                'positions': positions
+            }
+        
+        except Exception as e:
+            logger.error(f"Error getting portfolio: {e}")
+            return None 

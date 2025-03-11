@@ -425,28 +425,87 @@ def create_combined_html_report(stocks_data, expiration, output_dir='reports'):
     html_content.append("th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }")
     html_content.append("th { background-color: #f5f5f5; }")
     html_content.append("h1, h2 { color: #333; }")
+    html_content.append(".profits { color: green; }")
+    html_content.append(".losses { color: red; }")
     html_content.append("</style>")
     html_content.append("</head><body>")
     
-    # Format expiration date
-    try:
-        exp_date = parse_date_string(expiration)
-        formatted_exp = exp_date.strftime('%Y-%m-%d')
-    except:
-        formatted_exp = expiration
+    html_content.append("<h1>Options Trading Report</h1>")
+    html_content.append(f"<p>Expiration Date: {expiration}</p>")
+    html_content.append(f"<p>Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>")
     
-    # Add report header
-    html_content.append(f"<h1>Options Report - {formatted_exp}</h1>")
-    html_content.append(f"<p>Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>")
+    # Add summary table
+    html_content.append("<h2>Summary</h2>")
+    html_content.append("<table>")
+    html_content.append("<tr><th>Ticker</th><th>Current Price</th><th>Position</th><th>Recommended Put (Sell)</th><th>Recommended Call</th></tr>")
     
-    # Process each stock
+    for stock in stocks_data:
+        ticker = stock['ticker']
+        price = stock['price']
+        recommendation = stock.get('recommendation', {})
+        position = stock.get('position')
+        
+        # Format position info
+        position_info = "None"
+        if position:
+            shares = position['shares']
+            avg_cost = position['avg_cost']
+            position_info = f"{shares:.0f} shares @ ${avg_cost:.2f}"
+        
+        # Get recommendations
+        put_rec = recommendation.get('put', {})
+        call_rec = recommendation.get('call', {})
+        
+        put_info = ""
+        if put_rec:
+            put_strike = put_rec.get('strike')
+            put_info = f"${put_strike:.2f} ({put_rec.get('percent')}%)"
+            
+        call_info = ""
+        if call_rec:
+            call_strike = call_rec.get('strike')
+            call_action = call_rec.get('action')
+            call_info = f"{call_action} ${call_strike:.2f} ({call_rec.get('percent')}%)"
+            
+        html_content.append(f"<tr>")
+        html_content.append(f"<td>{ticker}</td>")
+        html_content.append(f"<td>${price:.2f}</td>")
+        html_content.append(f"<td>{position_info}</td>")
+        html_content.append(f"<td>{put_info}</td>")
+        html_content.append(f"<td>{call_info}</td>")
+        html_content.append("</tr>")
+        
+    html_content.append("</table>")
+    
+    # Add detailed information for each stock
     for stock in stocks_data:
         ticker = stock['ticker']
         price = stock['price']
         options = stock.get('options', {})
         recommendation = stock.get('recommendation', {})
+        position = stock.get('position')
+        estimated_earnings = stock.get('estimated_earnings', {})
         
         html_content.append(f"<h2>{ticker} (${price:.2f})</h2>")
+        
+        # Add position information if available
+        if position:
+            html_content.append("<h3>Current Position</h3>")
+            html_content.append("<table>")
+            html_content.append("<tr><th>Shares</th><th>Average Cost</th><th>Market Value</th><th>Unrealized P&L</th></tr>")
+            
+            # Format unrealized PnL with color
+            pnl = position['unrealized_pnl']
+            pnl_class = "profits" if pnl >= 0 else "losses"
+            pnl_sign = "+" if pnl > 0 else ""
+            
+            html_content.append(f"<tr>")
+            html_content.append(f"<td>{position['shares']:.0f}</td>")
+            html_content.append(f"<td>${position['avg_cost']:.2f}</td>")
+            html_content.append(f"<td>${position['market_value']:.2f}</td>")
+            html_content.append(f"<td class='{pnl_class}'>{pnl_sign}${pnl:.2f}</td>")
+            html_content.append("</tr>")
+            html_content.append("</table>")
         
         if recommendation:
             html_content.append("<h3>Recommended Strategy:</h3>")
@@ -457,22 +516,16 @@ def create_combined_html_report(stocks_data, expiration, output_dir='reports'):
             put_rec = recommendation.get('put', {})
             if put_rec:
                 put_strike = put_rec.get('strike')
+                put_action = put_rec.get('action')
                 put_key = f"{put_strike}_P"
                 put_data = options.get(put_key, {})
                 
-                bid = put_data.get('bid', 'N/A')
-                ask = put_data.get('ask', 'N/A')
-                last = put_data.get('last', 'N/A')
+                bid = format_price(put_data.get('bid'))
+                ask = format_price(put_data.get('ask'))
+                last = format_price(put_data.get('last'))
                 
-                if isinstance(bid, (int, float)) and bid > 0:
-                    bid = f"${bid:.2f}"
-                if isinstance(ask, (int, float)) and ask > 0:
-                    ask = f"${ask:.2f}"
-                if isinstance(last, (int, float)) and last > 0:
-                    last = f"${last:.2f}"
-                    
                 html_content.append(f"<tr>")
-                html_content.append(f"<td>{put_rec.get('action', 'SELL')}</td>")
+                html_content.append(f"<td>{put_action}</td>")
                 html_content.append(f"<td>PUT</td>")
                 html_content.append(f"<td>${put_strike:.2f}</td>")
                 html_content.append(f"<td>{put_rec.get('percent')}%</td>")
@@ -485,22 +538,16 @@ def create_combined_html_report(stocks_data, expiration, output_dir='reports'):
             call_rec = recommendation.get('call', {})
             if call_rec:
                 call_strike = call_rec.get('strike')
+                call_action = call_rec.get('action')
                 call_key = f"{call_strike}_C"
                 call_data = options.get(call_key, {})
                 
-                bid = call_data.get('bid', 'N/A')
-                ask = call_data.get('ask', 'N/A')
-                last = call_data.get('last', 'N/A')
+                bid = format_price(call_data.get('bid'))
+                ask = format_price(call_data.get('ask'))
+                last = format_price(call_data.get('last'))
                 
-                if isinstance(bid, (int, float)) and bid > 0:
-                    bid = f"${bid:.2f}"
-                if isinstance(ask, (int, float)) and ask > 0:
-                    ask = f"${ask:.2f}"
-                if isinstance(last, (int, float)) and last > 0:
-                    last = f"${last:.2f}"
-                    
                 html_content.append(f"<tr>")
-                html_content.append(f"<td>{call_rec.get('action', 'BUY')}</td>")
+                html_content.append(f"<td>{call_action}</td>")
                 html_content.append(f"<td>CALL</td>")
                 html_content.append(f"<td>${call_strike:.2f}</td>")
                 html_content.append(f"<td>{call_rec.get('percent')}%</td>")
@@ -510,6 +557,40 @@ def create_combined_html_report(stocks_data, expiration, output_dir='reports'):
                 html_content.append("</tr>")
                 
             html_content.append("</table>")
+            
+        # Add estimated earnings information if available
+        if estimated_earnings:
+            html_content.append("<h3>Potential Earnings:</h3>")
+            
+            # Covered Call earnings
+            call_earnings = estimated_earnings.get('call')
+            if call_earnings:
+                html_content.append("<h4>Covered Call Strategy:</h4>")
+                html_content.append("<table>")
+                html_content.append("<tr><th>Contracts</th><th>Premium per Contract</th><th>Total Premium</th><th>Return on Position</th></tr>")
+                
+                html_content.append(f"<tr>")
+                html_content.append(f"<td>{call_earnings['contracts']}</td>")
+                html_content.append(f"<td>${call_earnings['premium_per_contract']:.2f}</td>")
+                html_content.append(f"<td>${call_earnings['total_premium']:.2f}</td>")
+                html_content.append(f"<td>{call_earnings['premium_percent']:.2f}%</td>")
+                html_content.append("</tr>")
+                html_content.append("</table>")
+            
+            # Cash-Secured Put earnings
+            put_earnings = estimated_earnings.get('put')
+            if put_earnings:
+                html_content.append("<h4>Cash-Secured Put Strategy:</h4>")
+                html_content.append("<table>")
+                html_content.append("<tr><th>Max Contracts</th><th>Premium per Contract</th><th>Total Premium</th><th>Return on Cash</th></tr>")
+                
+                html_content.append(f"<tr>")
+                html_content.append(f"<td>{put_earnings['contracts']}</td>")
+                html_content.append(f"<td>${put_earnings['premium_per_contract']:.2f}</td>")
+                html_content.append(f"<td>${put_earnings['total_premium']:.2f}</td>")
+                html_content.append(f"<td>{put_earnings['premium_percent']:.2f}%</td>")
+                html_content.append("</tr>")
+                html_content.append("</table>")
     
     html_content.append("</body></html>")
     
