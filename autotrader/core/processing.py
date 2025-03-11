@@ -6,6 +6,9 @@ import os
 import logging
 from datetime import datetime
 from .export import export_to_csv, create_combined_html_report
+import pandas as pd
+import numpy as np
+import webbrowser
 
 # Configure logger
 logger = logging.getLogger('autotrader.processing')
@@ -17,112 +20,130 @@ def process_stock(ib_connection, ticker, expiration_date, interval, num_strikes,
     Args:
         ib_connection: IBConnection instance
         ticker: Stock ticker symbol
-        expiration_date: Option expiration date (YYYYMMDD format)
+        expiration_date: Option expiration date in YYYYMMDD format
         interval: Strike price interval
-        num_strikes: Number of strikes to check around current price
-        stock_price: Current stock price (optional, will be fetched if not provided)
+        num_strikes: Number of strikes to fetch on each side of current price
+        stock_price: Current stock price (if None, it will be fetched)
         
     Returns:
-        dict: Dictionary containing stock price, call options, and put options
+        dict: Dictionary with stock data including current price and option chains
     """
-    logger.debug(f"Processing {ticker}...")
+    logger = logging.getLogger(__name__)
     
-    # Store option data
-    call_options = {}
-    put_options = {}
-    
-    # Get stock price if not provided
+    # Get current stock price if not provided
     if stock_price is None:
-        logger.debug(f"Getting {ticker} stock price...")
         stock_price = ib_connection.get_stock_price(ticker)
-        if stock_price is None:
-            logger.error(f"Failed to get {ticker} stock price")
-            return None
+        
+    if stock_price is None:
+        logger.error(f"Could not get current price for {ticker}")
+        return None
+        
+    logger.info(f"Current price for {ticker}: ${stock_price:.2f}")
     
-    logger.info(f"{ticker} current price: ${stock_price}")
+    # Calculate recommended strike prices (20% below and 20% above)
+    put_strike = round(stock_price * 0.8 / interval) * interval
+    call_strike = round(stock_price * 1.2 / interval) * interval
     
-    # Calculate appropriate strikes (around the current price)
-    current_strike = round(stock_price / interval) * interval
-    strikes = []
+    # Get option prices for put and call
+    logger.info(f"Fetching recommended options for {ticker} at expiration {expiration_date}")
+    logger.info(f"Recommended PUT (sell): Strike ${put_strike:.2f} (-20%)")
+    logger.info(f"Recommended CALL (buy): Strike ${call_strike:.2f} (+20%)")
     
-    # Add strikes below and above current price
-    for i in range(-num_strikes, num_strikes + 1):
-        strike = current_strike + (i * interval)
-        strikes.append(strike)
+    # Get option prices
+    options_data = {}
     
-    logger.debug(f"Strikes for {ticker}: {strikes}")
-    logger.info(f"Getting option prices for {ticker}...")
+    # Get put option data
+    put_contract = ib_connection.create_option_contract(ticker, expiration_date, put_strike, 'P')
+    put_data = ib_connection.get_option_price(put_contract)
+    if put_data:
+        options_data[f"{put_strike}_P"] = put_data
     
-    # Get option data
-    option_data = ib_connection.get_multiple_option_prices(ticker, expiration_date, strikes)
+    # Get call option data
+    call_contract = ib_connection.create_option_contract(ticker, expiration_date, call_strike, 'C')
+    call_data = ib_connection.get_option_price(call_contract)
+    if call_data:
+        options_data[f"{call_strike}_C"] = call_data
     
-    # Process call options
-    for strike in strikes:
-        key = (strike, 'C')
-        if key in option_data:
-            data = option_data[key]
-            bid = data.get('bid', None)
-            ask = data.get('ask', None)
-            last = data.get('last', None)
-            
-            bid_str = f"${bid:.2f}" if bid is not None and bid > 0 else "N/A"
-            ask_str = f"${ask:.2f}" if ask is not None and ask > 0 else "N/A"
-            last_str = f"${last:.2f}" if last is not None and last > 0 else "N/A"
-            
-            logger.debug(f"{ticker} {expiration_date} ${strike} Call: Bid={bid_str}, Ask={ask_str}, Last={last_str}")
-            call_options[strike] = {'bid': bid_str, 'ask': ask_str, 'last': last_str}
-    
-    # Process put options
-    for strike in strikes:
-        key = (strike, 'P')
-        if key in option_data:
-            data = option_data[key]
-            bid = data.get('bid', None)
-            ask = data.get('ask', None)
-            last = data.get('last', None)
-            
-            bid_str = f"${bid:.2f}" if bid is not None and bid > 0 else "N/A"
-            ask_str = f"${ask:.2f}" if ask is not None and ask > 0 else "N/A"
-            last_str = f"${last:.2f}" if last is not None and last > 0 else "N/A"
-            
-            logger.debug(f"{ticker} {expiration_date} ${strike} Put: Bid={bid_str}, Ask={ask_str}, Last={last_str}")
-            put_options[strike] = {'bid': bid_str, 'ask': ask_str, 'last': last_str}
-    
+    # Return stock data
     return {
         'ticker': ticker,
-        'stock_price': stock_price,
-        'call_options': call_options,
-        'put_options': put_options
+        'price': stock_price,
+        'options': options_data,
+        'recommendation': {
+            'put': {
+                'strike': put_strike,
+                'action': 'SELL',
+                'percent': -20
+            },
+            'call': {
+                'strike': call_strike,
+                'action': 'BUY',
+                'percent': 20
+            }
+        }
     }
 
 def print_stock_summary(stock_data):
     """
-    Print a summary of stock options to the console
+    Print a summary of stock options data to the console
     
     Args:
-        stock_data (dict): Dictionary containing stock price, call options, and put options
+        stock_data (dict): Stock data dictionary
     """
+    if not stock_data:
+        print("No data available")
+        return
+        
     ticker = stock_data['ticker']
-    stock_price = stock_data['stock_price']
-    call_options = stock_data['call_options']
-    put_options = stock_data['put_options']
+    price = stock_data['price']
+    options = stock_data.get('options', {})
+    recommendation = stock_data.get('recommendation', {})
     
     print(f"\n=== {ticker} OPTIONS SUMMARY ===")
-    print(f"{ticker} Price: ${stock_price:.2f}")
+    print(f"{ticker} Price: ${price:.2f}")
     
-    print("\nCall Options:")
-    print(f"{'Strike':<10} {'Bid':<10} {'Ask':<10} {'Last':<10}")
-    print("-" * 40)
-    for strike in sorted(call_options.keys()):
-        opt = call_options[strike]
-        print(f"${strike:<9} {opt['bid']:<10} {opt['ask']:<10} {opt['last']:<10}")
-    
-    print("\nPut Options:")
-    print(f"{'Strike':<10} {'Bid':<10} {'Ask':<10} {'Last':<10}")
-    print("-" * 40)
-    for strike in sorted(put_options.keys()):
-        opt = put_options[strike]
-        print(f"${strike:<9} {opt['bid']:<10} {opt['ask']:<10} {opt['last']:<10}")
+    if recommendation:
+        print("\nRECOMMENDED STRATEGY:")
+        
+        put_rec = recommendation.get('put', {})
+        if put_rec:
+            put_strike = put_rec.get('strike')
+            put_key = f"{put_strike}_P"
+            put_data = options.get(put_key, {})
+            
+            bid = put_data.get('bid', 'N/A')
+            ask = put_data.get('ask', 'N/A')
+            last = put_data.get('last', 'N/A')
+            
+            if isinstance(bid, (int, float)) and bid > 0:
+                bid = f"${bid:.2f}"
+            if isinstance(ask, (int, float)) and ask > 0:
+                ask = f"${ask:.2f}"
+            if isinstance(last, (int, float)) and last > 0:
+                last = f"${last:.2f}"
+                
+            print(f"SELL PUT  @ Strike ${put_strike:.2f} ({put_rec.get('percent')}%)")
+            print(f"  Bid: {bid}, Ask: {ask}, Last: {last}")
+        
+        call_rec = recommendation.get('call', {})
+        if call_rec:
+            call_strike = call_rec.get('strike')
+            call_key = f"{call_strike}_C"
+            call_data = options.get(call_key, {})
+            
+            bid = call_data.get('bid', 'N/A')
+            ask = call_data.get('ask', 'N/A')
+            last = call_data.get('last', 'N/A')
+            
+            if isinstance(bid, (int, float)) and bid > 0:
+                bid = f"${bid:.2f}"
+            if isinstance(ask, (int, float)) and ask > 0:
+                ask = f"${ask:.2f}"
+            if isinstance(last, (int, float)) and last > 0:
+                last = f"${last:.2f}"
+                
+            print(f"BUY CALL  @ Strike ${call_strike:.2f} ({call_rec.get('percent')}%)")
+            print(f"  Bid: {bid}, Ask: {ask}, Last: {last}")
 
 def export_all_stocks_data(stocks_data, expiration, format='all', output_dir='reports'):
     """
@@ -200,4 +221,29 @@ def get_strikes_around_price(price, interval, num_strikes):
         strike = current_strike + (i * interval)
         strikes.append(strike)
     
-    return strikes 
+    return strikes
+
+def open_in_browser(file_path):
+    """
+    Opens the given file path in the default web browser.
+    
+    Args:
+        file_path (str): Path to the file to open in browser
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    logger = logging.getLogger(__name__)
+    
+    if not os.path.exists(file_path):
+        logger.error(f"Cannot open in browser: File not found: {file_path}")
+        return False
+    
+    try:
+        url = 'file://' + os.path.abspath(file_path)
+        logger.info(f"Opening in browser: {url}")
+        webbrowser.open(url)
+        return True
+    except Exception as e:
+        logger.error(f"Failed to open browser: {e}")
+        return False 

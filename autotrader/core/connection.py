@@ -350,97 +350,46 @@ class IBConnection:
             logger.error(f"Error getting option expirations for {symbol}: {e}")
             return []
             
-    def get_option_price(self, symbol, expiration, strike, right='C', exchange='SMART'):
+    def get_option_price(self, contract):
         """
-        Get option price
+        Get the price data for an option contract
         
         Args:
-            symbol (str): Stock symbol
-            expiration (str): Option expiration (format: YYYYMMDD)
-            strike (float): Option strike price
-            right (str): Option right ('C' for call, 'P' for put)
-            exchange (str): Exchange
+            contract (Contract): IB option contract
             
         Returns:
-            dict: Option price information
+            dict: Dictionary with bid, ask, and last prices
         """
-        if not self.is_connected():
-            logger.warning("Not connected to IB. Attempting to connect...")
-            if not self.connect():
-                return None
-        
-        logger.info(f"Creating option contract: {symbol} {expiration} ${strike} {right}")
-        option = Option(symbol, expiration, strike, right, exchange)
-        option.currency = 'USD'  # Ensure currency is set
-        
         try:
-            logger.info(f"Qualifying option contract...")
-            contracts = self.ib.qualifyContracts(option)
-            if not contracts:
-                logger.warning(f"Could not qualify option contract: {symbol} {expiration} ${strike} {right}")
-                
-                # Try to get available expirations
-                available_expirations = self.get_available_expirations(symbol)
-                if available_expirations:
-                    logger.info(f"Available expirations for {symbol}: {', '.join(available_expirations[:5])}...")
-                    
-                # Return dummy data for testing purposes
-                return {
-                    'symbol': symbol,
-                    'expiration': expiration,
-                    'strike': strike,
-                    'right': right,
-                    'last': None,
-                    'bid': None,
-                    'ask': None,
-                    'volume': 0,
-                    'open_interest': 0,
-                    'underlying': None
-                }
+            # Qualify the contract first
+            qualified_contracts = self.ib.qualifyContracts(contract)
+            if not qualified_contracts:
+                return None
             
-            qualified_option = contracts[0]
-            logger.info(f"Option contract qualified: {qualified_option}")
+            qualified_contract = qualified_contracts[0]
             
             # Request market data
-            logger.info(f"Requesting market data for option: {symbol} {expiration} ${strike} {right}")
-            ticker = self.ib.reqMktData(qualified_option)
-            self.ib.sleep(2)  # Wait for data
+            ticker = self.ib.reqMktData(qualified_contract)
             
-            logger.info(f"Option data received: last={ticker.last}, bid={ticker.bid}, ask={ticker.ask}")
+            # Wait for market data to arrive
+            self.ib.sleep(3)
             
-            result = {
-                'symbol': symbol,
-                'expiration': expiration,
-                'strike': strike,
-                'right': right,
-                'last': ticker.last,
-                'bid': ticker.bid,
-                'ask': ticker.ask,
-                'volume': ticker.volume,
-                'open_interest': ticker.open_interest if hasattr(ticker, 'open_interest') else None,
-                'underlying': ticker.underlying if hasattr(ticker, 'underlying') else None
-            }
+            # Get price data
+            bid = ticker.bid if hasattr(ticker, 'bid') and ticker.bid is not None and ticker.bid > 0 else None
+            ask = ticker.ask if hasattr(ticker, 'ask') and ticker.ask is not None and ticker.ask > 0 else None
+            last = ticker.last if hasattr(ticker, 'last') and ticker.last is not None and ticker.last > 0 else None
             
             # Cancel market data subscription
-            logger.info(f"Canceling market data subscription for option")
-            self.ib.cancelMktData(qualified_option)
+            self.ib.cancelMktData(qualified_contract)
             
-            return result
-        except Exception as e:
-            logger.error(f"Error getting option price for {symbol} {expiration} ${strike} {right}: {e}")
-            # Return dummy data for testing purposes
             return {
-                'symbol': symbol,
-                'expiration': expiration,
-                'strike': strike,
-                'right': right,
-                'last': None,
-                'bid': None,
-                'ask': None,
-                'volume': 0,
-                'open_interest': 0,
-                'underlying': None
+                'bid': bid,
+                'ask': ask,
+                'last': last
             }
+        except Exception as e:
+            logger.error(f"Error getting option price: {e}")
+            return None
     
     def get_multiple_option_prices(self, symbol, expiration, strikes, rights=None, exchange='SMART'):
         """
@@ -643,4 +592,21 @@ class IBConnection:
             self.ib.cancelMktData(qc)
         
         logger.info(f"Retrieved option data for {len(results)} symbols")
-        return results 
+        return results
+
+    def create_option_contract(self, ticker, expiration_date, strike, right):
+        """
+        Create an option contract
+        
+        Args:
+            ticker (str): Stock ticker symbol
+            expiration_date (str): Option expiration date in YYYYMMDD format
+            strike (float): Strike price
+            right (str): Option right ('C' for call, 'P' for put)
+            
+        Returns:
+            Contract: IB option contract
+        """
+        from ib_insync import Option
+        contract = Option(ticker, expiration_date, strike, right, 'SMART', '100', 'USD')
+        return contract 

@@ -16,7 +16,8 @@ from .processing import (
     process_stock,
     print_stock_summary,
     export_all_stocks_data,
-    get_strikes_around_price
+    get_strikes_around_price,
+    open_in_browser
 )
 
 __all__ = [
@@ -41,5 +42,6 @@ __all__ = [
     'process_stock',
     'print_stock_summary',
     'export_all_stocks_data',
-    'get_strikes_around_price'
+    'get_strikes_around_price',
+    'open_in_browser'
 ] 

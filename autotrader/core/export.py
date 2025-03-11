@@ -7,6 +7,7 @@ import csv
 import logging
 import pandas as pd
 from datetime import datetime
+from .utils import format_date_string, parse_date_string
 
 logger = logging.getLogger('autotrader.export')
 
@@ -402,263 +403,119 @@ def create_combined_html_report(stocks_data, expiration, output_dir='reports'):
     Create a combined HTML report for multiple stocks
     
     Args:
-        stocks_data (list): List of dictionaries containing stock data
-        expiration (str): Option expiration date
-        output_dir (str): Directory to save export files
+        stocks_data: List of dictionaries containing stock data
+        expiration: Option expiration date
+        output_dir: Directory to save the report
         
     Returns:
-        str: Path to the saved HTML file
+        str: Path to the HTML report
     """
-    # Create output directory if it doesn't exist
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Generate timestamp for filename
+    # Create timestamp for filename
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     
-    # Define filename
-    filename = os.path.join(output_dir, f"combined_options_data_{timestamp}.html")
+    # Make sure the output directory exists
+    os.makedirs(output_dir, exist_ok=True)
     
-    # Format expiration date for display
+    # Create HTML content
+    html_content = []
+    html_content.append("<html><head>")
+    html_content.append("<style>")
+    html_content.append("body { font-family: Arial, sans-serif; margin: 20px; }")
+    html_content.append("table { border-collapse: collapse; margin: 10px 0; }")
+    html_content.append("th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }")
+    html_content.append("th { background-color: #f5f5f5; }")
+    html_content.append("h1, h2 { color: #333; }")
+    html_content.append("</style>")
+    html_content.append("</head><body>")
+    
+    # Format expiration date
     try:
-        # Try to parse the expiration from YYYYMMDD format
-        exp_year = expiration[:4]
-        exp_month = expiration[4:6]
-        exp_day = expiration[6:8]
-        formatted_expiration = f"{exp_year}-{exp_month}-{exp_day}"
+        exp_date = parse_date_string(expiration)
+        formatted_exp = exp_date.strftime('%Y-%m-%d')
     except:
-        formatted_expiration = expiration
+        formatted_exp = expiration
     
-    # Create HTML header
-    html_content = f"""
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Combined Options Data</title>
-        <style>
-            body {{
-                font-family: Arial, sans-serif;
-                margin: 20px;
-                color: #333;
-                line-height: 1.6;
-            }}
-            .container {{
-                max-width: 1000px;
-                margin: 0 auto;
-            }}
-            h1, h2, h3 {{
-                color: #2c3e50;
-            }}
-            .summary {{
-                background-color: #f8f9fa;
-                padding: 15px;
-                border-radius: 5px;
-                margin-bottom: 20px;
-                border-left: 5px solid #007bff;
-            }}
-            .stock-section {{
-                margin-bottom: 40px;
-                border-bottom: 1px solid #ddd;
-                padding-bottom: 20px;
-            }}
-            table {{
-                width: 100%;
-                border-collapse: collapse;
-                margin-bottom: 20px;
-            }}
-            th, td {{
-                padding: 12px 15px;
-                text-align: center;
-                border-bottom: 1px solid #ddd;
-            }}
-            th {{
-                background-color: #007bff;
-                color: white;
-                position: sticky;
-                top: 0;
-            }}
-            tr:nth-child(even) {{
-                background-color: #f2f2f2;
-            }}
-            tr:hover {{
-                background-color: #e9ecef;
-            }}
-            .timestamp {{
-                font-size: 12px;
-                color: #6c757d;
-                margin-top: 40px;
-                text-align: center;
-            }}
-            .price-data {{
-                font-weight: bold;
-                font-size: 18px;
-            }}
-            .strike-header {{
-                background-color: #343a40;
-            }}
-            .call-section th {{
-                background-color: #28a745;
-            }}
-            .put-section th {{
-                background-color: #dc3545;
-            }}
-            .unavailable {{
-                color: #999;
-                font-style: italic;
-            }}
-            .nav {{
-                display: flex;
-                gap: 10px;
-                margin-bottom: 20px;
-                background-color: #f8f9fa;
-                padding: 10px;
-                border-radius: 5px;
-                position: sticky;
-                top: 0;
-                z-index: 100;
-            }}
-            .nav a {{
-                text-decoration: none;
-                color: #007bff;
-                font-weight: bold;
-                padding: 5px 10px;
-                border-radius: 3px;
-            }}
-            .nav a:hover {{
-                background-color: #007bff;
-                color: white;
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h1>Combined Options Data</h1>
-            
-            <div class="summary">
-                <p><strong>Expiration Date:</strong> {formatted_expiration}</p>
-                <p><strong>Stocks Analyzed:</strong> {', '.join(stock['ticker'] for stock in stocks_data)}</p>
-            </div>
-            
-            <div class="nav">
-                <a href="#top">Top</a>
-    """
+    # Add report header
+    html_content.append(f"<h1>Options Report - {formatted_exp}</h1>")
+    html_content.append(f"<p>Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>")
     
-    # Add navigation links for each stock
+    # Process each stock
     for stock in stocks_data:
         ticker = stock['ticker']
-        html_content += f'<a href="#{ticker.lower()}">{ticker}</a>'
-    
-    html_content += """
-            </div>
-    """
-    
-    # Add sections for each stock
-    for stock in stocks_data:
-        ticker = stock['ticker']
-        stock_price = stock['stock_price']
-        call_options = stock['call_options']
-        put_options = stock['put_options']
+        price = stock['price']
+        options = stock.get('options', {})
+        recommendation = stock.get('recommendation', {})
         
-        html_content += f"""
-            <div id="{ticker.lower()}" class="stock-section">
-                <h2>{ticker} Options</h2>
-                
-                <div class="summary">
-                    <p><strong>Stock Price:</strong> <span class="price-data">${stock_price:.2f}</span></p>
-                </div>
-                
-                <table>
-                    <thead>
-                        <tr>
-                            <th rowspan="2" class="strike-header">Strike</th>
-                            <th colspan="3" class="call-section">Call Options</th>
-                            <th colspan="3" class="put-section">Put Options</th>
-                        </tr>
-                        <tr>
-                            <th class="call-section">Bid</th>
-                            <th class="call-section">Ask</th>
-                            <th class="call-section">Last</th>
-                            <th class="put-section">Bid</th>
-                            <th class="put-section">Ask</th>
-                            <th class="put-section">Last</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-        """
+        html_content.append(f"<h2>{ticker} (${price:.2f})</h2>")
         
-        # Get all strikes for this stock
-        all_strikes = sorted(set(list(call_options.keys()) + list(put_options.keys())))
-        
-        # Add data rows
-        for strike in all_strikes:
-            html_content += f"""
-                        <tr>
-                            <td><strong>${strike}</strong></td>
-            """
+        if recommendation:
+            html_content.append("<h3>Recommended Strategy:</h3>")
+            html_content.append("<table>")
+            html_content.append("<tr><th>Action</th><th>Type</th><th>Strike</th><th>Change</th><th>Bid</th><th>Ask</th><th>Last</th></tr>")
             
-            # Add call data if available
-            if strike in call_options:
-                call = call_options[strike]
-                # Process values to show last price as fallback
-                bid_val = process_option_data(call, 'bid')
-                ask_val = process_option_data(call, 'ask')
-                last_val = call['last']
+            # Add put recommendation
+            put_rec = recommendation.get('put', {})
+            if put_rec:
+                put_strike = put_rec.get('strike')
+                put_key = f"{put_strike}_P"
+                put_data = options.get(put_key, {})
                 
-                html_content += f"""
-                            <td>{bid_val}</td>
-                            <td>{ask_val}</td>
-                            <td>{last_val}</td>
-                """
-            else:
-                html_content += """
-                            <td class="unavailable">N/A</td>
-                            <td class="unavailable">N/A</td>
-                            <td class="unavailable">N/A</td>
-                """
-            
-            # Add put data if available
-            if strike in put_options:
-                put = put_options[strike]
-                # Process values to show last price as fallback
-                bid_val = process_option_data(put, 'bid')
-                ask_val = process_option_data(put, 'ask')
-                last_val = put['last']
+                bid = put_data.get('bid', 'N/A')
+                ask = put_data.get('ask', 'N/A')
+                last = put_data.get('last', 'N/A')
                 
-                html_content += f"""
-                            <td>{bid_val}</td>
-                            <td>{ask_val}</td>
-                            <td>{last_val}</td>
-                """
-            else:
-                html_content += """
-                            <td class="unavailable">N/A</td>
-                            <td class="unavailable">N/A</td>
-                            <td class="unavailable">N/A</td>
-                """
+                if isinstance(bid, (int, float)) and bid > 0:
+                    bid = f"${bid:.2f}"
+                if isinstance(ask, (int, float)) and ask > 0:
+                    ask = f"${ask:.2f}"
+                if isinstance(last, (int, float)) and last > 0:
+                    last = f"${last:.2f}"
+                    
+                html_content.append(f"<tr>")
+                html_content.append(f"<td>{put_rec.get('action', 'SELL')}</td>")
+                html_content.append(f"<td>PUT</td>")
+                html_content.append(f"<td>${put_strike:.2f}</td>")
+                html_content.append(f"<td>{put_rec.get('percent')}%</td>")
+                html_content.append(f"<td>{bid}</td>")
+                html_content.append(f"<td>{ask}</td>")
+                html_content.append(f"<td>{last}</td>")
+                html_content.append("</tr>")
             
-            html_content += """
-                        </tr>
-            """
-        
-        html_content += """
-                    </tbody>
-                </table>
-            </div>
-        """
+            # Add call recommendation
+            call_rec = recommendation.get('call', {})
+            if call_rec:
+                call_strike = call_rec.get('strike')
+                call_key = f"{call_strike}_C"
+                call_data = options.get(call_key, {})
+                
+                bid = call_data.get('bid', 'N/A')
+                ask = call_data.get('ask', 'N/A')
+                last = call_data.get('last', 'N/A')
+                
+                if isinstance(bid, (int, float)) and bid > 0:
+                    bid = f"${bid:.2f}"
+                if isinstance(ask, (int, float)) and ask > 0:
+                    ask = f"${ask:.2f}"
+                if isinstance(last, (int, float)) and last > 0:
+                    last = f"${last:.2f}"
+                    
+                html_content.append(f"<tr>")
+                html_content.append(f"<td>{call_rec.get('action', 'BUY')}</td>")
+                html_content.append(f"<td>CALL</td>")
+                html_content.append(f"<td>${call_strike:.2f}</td>")
+                html_content.append(f"<td>{call_rec.get('percent')}%</td>")
+                html_content.append(f"<td>{bid}</td>")
+                html_content.append(f"<td>{ask}</td>")
+                html_content.append(f"<td>{last}</td>")
+                html_content.append("</tr>")
+                
+            html_content.append("</table>")
     
-    # Complete the HTML
-    html_content += f"""
-            <div class="timestamp">
-                Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-            </div>
-        </div>
-    </body>
-    </html>
-    """
+    html_content.append("</body></html>")
     
-    # Write to file
-    with open(filename, 'w') as f:
-        f.write(html_content)
+    # Write HTML file
+    html_path = os.path.join(output_dir, f"options_report_{timestamp}.html")
+    with open(html_path, 'w') as f:
+        f.write("\n".join(html_content))
     
-    return filename 
+    return html_path 

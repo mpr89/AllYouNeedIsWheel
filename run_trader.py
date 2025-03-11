@@ -14,7 +14,8 @@ from autotrader.core import (
     process_stock,
     print_stock_summary,
     export_all_stocks_data,
-    create_combined_html_report
+    create_combined_html_report,
+    open_in_browser
 )
 
 # Set up logging
@@ -34,6 +35,7 @@ def main():
     parser.add_argument("--expiration_date", help="Expiration date in format YYYYMMDD", default="20250321")
     parser.add_argument("--output_dir", help="Directory for output files", default="reports")
     parser.add_argument("--export_format", help="Export format: csv, html, or all", default="html")
+    parser.add_argument("--no_browser", action="store_true", help="Don't open report in browser")
     args = parser.parse_args()
     
     # Parse tickers list
@@ -100,6 +102,10 @@ def main():
             )
             
             logger.info(f"Exported consolidated HTML report: {report_path}")
+            
+            # Open the report in a browser if not disabled
+            if not args.no_browser:
+                open_in_browser(report_path)
     except Exception as e:
         logger.error(f"Error: {e}")
         import traceback
