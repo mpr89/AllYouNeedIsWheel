@@ -302,31 +302,37 @@ class IBConnection:
         stock.exchange = exchange
         stock.currency = 'USD'
         
-        self.ib.qualifyContracts(stock)
-        
-        # Request option chain
-        chains = self.ib.reqSecDefOptParams(stock.symbol, '', stock.secType, stock.conId)
-        
-        if not chains:
-            logger.error(f"No option chain found for {symbol}")
+        try:
+            self.ib.qualifyContracts(stock)
+            
+            # Request option chain
+            chains = self.ib.reqSecDefOptParams(stock.symbol, '', stock.secType, stock.conId)
+            
+            if not chains:
+                logger.error(f"No option chain found for {symbol}")
+                return None
+            
+            chain = next((c for c in chains if c.exchange == exchange), None)
+            if not chain:
+                logger.error(f"No option chain found for {symbol} on exchange {exchange}")
+                return None
+            
+            expirations = chain.expirations
+            strikes = chain.strikes
+            
+            # Build option contracts
+            options = []
+            for expiration in expirations:
+                for strike in strikes:
+                    option = Option(symbol, expiration, strike, right, exchange)
+                    option.currency = 'USD'
+                    option.multiplier = '100'  # Standard for equity options
+                    options.append(option)
+            
+            return options
+        except Exception as e:
+            logger.error(f"Error retrieving option chain for {symbol}: {e}")
             return None
-        
-        chain = next((c for c in chains if c.exchange == exchange), None)
-        if not chain:
-            logger.error(f"No option chain found for {symbol} on exchange {exchange}")
-            return None
-        
-        expirations = chain.expirations
-        strikes = chain.strikes
-        
-        # Build option contracts
-        options = []
-        for expiration in expirations:
-            for strike in strikes:
-                option = Option(symbol, expiration, strike, right, exchange)
-                options.append(option)
-        
-        return options
     
     def get_available_expirations(self, symbol, exchange='SMART'):
         """
@@ -385,13 +391,52 @@ class IBConnection:
             dict: Dictionary with bid, ask, and last prices
         """
         try:
-            # Qualify the contract first
-            qualified_contracts = self.ib.qualifyContracts(contract)
-            if not qualified_contracts:
-                logger.error(f"Could not qualify contract: {contract.symbol} {contract.lastTradeDateOrContractMonth} {contract.strike} {contract.right}")
-                return None
+            # Make sure contract has the exchange set to SMART
+            if not contract.exchange or contract.exchange != 'SMART':
+                contract.exchange = 'SMART'
             
-            qualified_contract = qualified_contracts[0]
+            # Try to qualify the contract first
+            try:
+                qualified_contracts = self.ib.qualifyContracts(contract)
+                if not qualified_contracts:
+                    logger.error(f"Could not qualify contract: {contract.symbol} {contract.lastTradeDateOrContractMonth} {contract.strike} {contract.right}")
+                    return None
+                
+                qualified_contract = qualified_contracts[0]
+            except Exception as e:
+                # If we get an ambiguous contract error, try to handle it
+                error_msg = str(e)
+                if "ambiguous" in error_msg.lower():
+                    logger.warning(f"Ambiguous contract: {contract.symbol} {contract.lastTradeDateOrContractMonth} {contract.strike} {contract.right}")
+                    
+                    # Try to create a more specific contract
+                    try:
+                        from ib_insync import Contract
+                        # Create a full contract specification with conId if possible
+                        detailed_contract = Contract(
+                            secType='OPT',
+                            symbol=contract.symbol,
+                            lastTradeDateOrContractMonth=contract.lastTradeDateOrContractMonth,
+                            strike=contract.strike,
+                            right=contract.right,
+                            multiplier='100',  # Standard for equity options
+                            exchange='SMART',
+                            currency='USD'
+                        )
+                        
+                        # Try again with the detailed contract
+                        qualified_contracts = self.ib.qualifyContracts(detailed_contract)
+                        if qualified_contracts:
+                            qualified_contract = qualified_contracts[0]
+                        else:
+                            logger.error(f"Still could not qualify contract after retry: {contract.symbol} {contract.lastTradeDateOrContractMonth} {contract.strike} {contract.right}")
+                            return None
+                    except Exception as inner_e:
+                        logger.error(f"Error handling ambiguous contract: {inner_e}")
+                        return None
+                else:
+                    logger.error(f"Error qualifying contract: {e}")
+                    return None
             
             # Request market data
             ticker = self.ib.reqMktData(qualified_contract)
@@ -465,6 +510,7 @@ class IBConnection:
             for right in rights:
                 option = Option(symbol, expiration, strike, right, exchange)
                 option.currency = 'USD'
+                option.multiplier = '100'  # Standard for equity options
                 options.append((strike, right, option))
         
         # Qualify all contracts at once
@@ -479,16 +525,51 @@ class IBConnection:
                 batch = options[i:i+batch_size]
                 batch_contracts = [opt[2] for opt in batch]
                 
-                # Qualify the batch
-                qualified_batch = self.ib.qualifyContracts(*batch_contracts)
-                
-                # Map back to our original strike/right information
-                for j, qualified in enumerate(qualified_batch):
+                # Process each contract in the batch individually to handle ambiguous contracts
+                for j, contract in enumerate(batch_contracts):
                     strike, right, _ = batch[j]
-                    qualified_options.append((strike, right, qualified))
+                    
+                    try:
+                        # Try to qualify the contract
+                        qualified = self.ib.qualifyContracts(contract)
+                        if qualified:
+                            qualified_options.append((strike, right, qualified[0]))
+                    except Exception as e:
+                        error_msg = str(e)
+                        if "ambiguous" in error_msg.lower():
+                            logger.warning(f"Ambiguous contract: {contract.symbol} {contract.lastTradeDateOrContractMonth} {contract.strike} {contract.right}")
+                            
+                            # Try to create a more specific contract
+                            try:
+                                from ib_insync import Contract
+                                # Create a full contract specification
+                                detailed_contract = Contract(
+                                    secType='OPT',
+                                    symbol=contract.symbol,
+                                    lastTradeDateOrContractMonth=contract.lastTradeDateOrContractMonth,
+                                    strike=contract.strike,
+                                    right=contract.right,
+                                    multiplier='100',  # Standard for equity options
+                                    exchange='SMART',
+                                    currency='USD'
+                                )
+                                
+                                # Try again with the detailed contract
+                                qualified = self.ib.qualifyContracts(detailed_contract)
+                                if qualified:
+                                    qualified_options.append((strike, right, qualified[0]))
+                            except Exception as inner_e:
+                                logger.warning(f"Error handling ambiguous contract: {inner_e}")
+                        else:
+                            logger.warning(f"Could not qualify contract for {contract.symbol} {contract.lastTradeDateOrContractMonth} {contract.strike} {contract.right}: {e}")
             
             logger.info(f"Successfully qualified {len(qualified_options)} option contracts")
             
+            # If none of the contracts could be qualified, return empty results
+            if not qualified_options:
+                logger.error("Could not qualify any of the option contracts")
+                return {}
+                
             # Request market data for all qualified options
             logger.info(f"Requesting market data for {len(qualified_options)} options...")
             tickers = {}
@@ -576,6 +657,7 @@ class IBConnection:
             for strike in symbol_strikes:
                 for right in rights:
                     contract = Option(symbol, expiration, strike, right, exchange, 'USD')
+                    contract.multiplier = '100'  # Standard for equity options
                     # Store contract details along with the contract
                     all_contracts.append((contract, symbol, strike, right))
         
@@ -583,18 +665,44 @@ class IBConnection:
             logger.error("No valid option contracts created")
             return {}
         
-        # Qualify all contracts at once
+        # Qualify each contract individually to handle ambiguous cases
         logger.info(f"Qualifying {len(all_contracts)} option contracts...")
         qualified_contracts = []
         
         for contract, symbol, strike, right in all_contracts:
             try:
-                # Qualify the contract
+                # Try to qualify the contract first
                 qualified = self.ib.qualifyContracts(contract)
                 if qualified:
                     qualified_contracts.append((qualified[0], symbol, strike, right))
             except Exception as e:
-                logger.warning(f"Could not qualify contract for {symbol} {expiration} {strike} {right}: {e}")
+                error_msg = str(e)
+                if "ambiguous" in error_msg.lower():
+                    logger.warning(f"Ambiguous contract: {symbol} {expiration} {strike} {right}")
+                    
+                    # Try to create a more specific contract
+                    try:
+                        from ib_insync import Contract
+                        # Create a full contract specification
+                        detailed_contract = Contract(
+                            secType='OPT',
+                            symbol=symbol,
+                            lastTradeDateOrContractMonth=expiration,
+                            strike=strike,
+                            right=right,
+                            multiplier='100',  # Standard for equity options
+                            exchange='SMART',
+                            currency='USD'
+                        )
+                        
+                        # Try again with the detailed contract
+                        qualified = self.ib.qualifyContracts(detailed_contract)
+                        if qualified:
+                            qualified_contracts.append((qualified[0], symbol, strike, right))
+                    except Exception as inner_e:
+                        logger.warning(f"Error handling ambiguous contract: {inner_e}")
+                else:
+                    logger.warning(f"Could not qualify contract for {symbol} {expiration} {strike} {right}: {e}")
         
         if not qualified_contracts:
             logger.error("Could not qualify any option contracts")
