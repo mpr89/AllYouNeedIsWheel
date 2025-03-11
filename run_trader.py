@@ -352,25 +352,30 @@ def main():
         
         # Export all stock data
         if all_stocks_data:
-            logger.info(f"Exporting option data in {EXPORT_FORMAT} format to {OUTPUT_DIR} directory...")
-            export_results = export_all_stocks_data(
+            # Generate timestamp for filenames
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            
+            # Create output directory if it doesn't exist
+            os.makedirs(OUTPUT_DIR, exist_ok=True)
+            
+            # Only create the combined HTML report
+            logger.info(f"Generating consolidated HTML report...")
+            from autotrader.core import create_combined_html_report
+            html_path = create_combined_html_report(
                 all_stocks_data,
                 expiration,
-                format=EXPORT_FORMAT,
                 output_dir=OUTPUT_DIR
             )
             
-            # Show export results
-            for format_type, paths in export_results.items():
-                for path in paths:
-                    logger.info(f"Exported {format_type.upper()} report: {path}")
-                    # Open HTML file in browser if on a desktop
-                    if format_type == 'html' and os.name != 'nt':  # Not on Windows
-                        try:
-                            import webbrowser
-                            webbrowser.open('file://' + os.path.abspath(path))
-                        except:
-                            pass  # Silently fail if browser can't be opened
+            logger.info(f"Exported consolidated HTML report: {html_path}")
+            
+            # Open HTML file in browser if on a desktop
+            if os.name != 'nt':  # Not on Windows
+                try:
+                    import webbrowser
+                    webbrowser.open('file://' + os.path.abspath(html_path))
+                except:
+                    pass  # Silently fail if browser can't be opened
             
     except Exception as e:
         logger.exception(f"Error: {e}")
