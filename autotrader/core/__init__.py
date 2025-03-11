@@ -6,6 +6,7 @@ from .connection import IBConnection
 from .export import export_options_data, export_to_csv, export_to_html, create_combined_html_report
 from .utils import (
     rotate_logs, 
+    rotate_reports,
     setup_logging, 
     get_closest_friday, 
     get_next_monthly_expiration,
@@ -32,6 +33,7 @@ __all__ = [
     
     # Utils
     'rotate_logs',
+    'rotate_reports',
     'setup_logging',
     'get_closest_friday',
     'get_next_monthly_expiration',

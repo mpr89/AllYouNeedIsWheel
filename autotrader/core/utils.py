@@ -37,6 +37,33 @@ def rotate_logs(logs_dir='logs', max_logs=5):
         except Exception as e:
             print(f"Error deleting log file {log_file}: {e}")
 
+def rotate_reports(reports_dir='reports', max_reports=5):
+    """
+    Rotate HTML report files, keeping only the specified number of most recent reports.
+    
+    Args:
+        reports_dir (str): Directory containing HTML report files
+        max_reports (int): Maximum number of report files to keep
+    """
+    # Get all HTML report files in the reports directory
+    report_files = glob.glob(os.path.join(reports_dir, 'options_report_*.html'))
+    
+    # If we don't have too many reports yet, no need to delete any
+    if len(report_files) <= max_reports:
+        return
+    
+    # Sort report files by modification time (newest first)
+    sorted_reports = sorted(report_files, key=os.path.getmtime, reverse=True)
+    
+    # Keep only the most recent reports, delete others
+    reports_to_delete = sorted_reports[max_reports:]
+    for report_file in reports_to_delete:
+        try:
+            os.remove(report_file)
+            print(f"Deleted old report file: {report_file}")
+        except Exception as e:
+            print(f"Error deleting report file {report_file}: {e}")
+
 def setup_logging(logs_dir='logs', log_prefix='trader', log_level=logging.DEBUG):
     """
     Set up logging configuration

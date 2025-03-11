@@ -11,6 +11,8 @@ from datetime import datetime, timedelta
 from autotrader.core import (
     IBConnection,
     setup_logging,
+    rotate_logs,
+    rotate_reports,
     process_stock,
     print_stock_summary,
     export_all_stocks_data,
@@ -93,6 +95,9 @@ def main():
             logger.info("Generating consolidated HTML report...")
             # Create output directory if it doesn't exist
             os.makedirs(args.output_dir, exist_ok=True)
+            
+            # Rotate reports to keep only the most recent ones
+            rotate_reports(reports_dir=args.output_dir, max_reports=5)
             
             # Create a consolidated HTML report
             report_path = create_combined_html_report(
