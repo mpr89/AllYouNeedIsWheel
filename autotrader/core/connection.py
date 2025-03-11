@@ -422,4 +422,111 @@ class IBConnection:
             
         except Exception as e:
             logger.error(f"Error getting multiple option prices: {e}")
-            return {} 
+            return {}
+    
+    def get_multiple_stocks_option_prices(self, symbols, expiration, strikes_map=None, rights=None, exchange='SMART'):
+        """
+        Get option prices for multiple stocks in a single batch
+        
+        Args:
+            symbols (list): List of stock symbols
+            expiration (str): Option expiration date in format YYYYMMDD
+            strikes_map (dict): Dictionary mapping symbols to lists of strikes.
+                                If None, the same strikes will be used for all symbols.
+            rights (list): List of option types, defaults to ['C', 'P']
+            exchange (str): Exchange to use
+            
+        Returns:
+            dict: Dictionary with symbol as key and option data as nested dict
+        """
+        if not self.is_connected():
+            logger.warning("Not connected to IB. Attempting to connect...")
+            if not self.connect():
+                return {}
+        
+        if rights is None:
+            rights = ['C', 'P']
+        
+        # Create all the option contracts for each symbol
+        all_contracts = []
+        
+        logger.info(f"Creating option contracts for {len(symbols)} symbols with expiration {expiration}")
+        
+        for symbol in symbols:
+            # Determine strikes for this symbol
+            symbol_strikes = []
+            if strikes_map and symbol in strikes_map:
+                symbol_strikes = strikes_map[symbol]
+            elif strikes_map and '__default__' in strikes_map:
+                symbol_strikes = strikes_map['__default__']
+            else:
+                logger.warning(f"No strikes specified for {symbol} and no default strikes found")
+                continue
+            
+            logger.info(f"Processing {len(symbol_strikes)} strikes for {symbol}")
+            
+            # Create contracts for each strike and right
+            for strike in symbol_strikes:
+                for right in rights:
+                    contract = Option(symbol, expiration, strike, right, exchange, 'USD')
+                    # Store contract details along with the contract
+                    all_contracts.append((contract, symbol, strike, right))
+        
+        if not all_contracts:
+            logger.error("No valid option contracts created")
+            return {}
+        
+        # Qualify all contracts at once
+        logger.info(f"Qualifying {len(all_contracts)} option contracts...")
+        qualified_contracts = []
+        
+        for contract, symbol, strike, right in all_contracts:
+            try:
+                # Qualify the contract
+                qualified = self.ib.qualifyContracts(contract)
+                if qualified:
+                    qualified_contracts.append((qualified[0], symbol, strike, right))
+            except Exception as e:
+                logger.warning(f"Could not qualify contract for {symbol} {expiration} {strike} {right}: {e}")
+        
+        if not qualified_contracts:
+            logger.error("Could not qualify any option contracts")
+            return {}
+        
+        logger.info(f"Successfully qualified {len(qualified_contracts)} option contracts")
+        
+        # Request market data for all contracts
+        logger.info(f"Requesting market data for {len(qualified_contracts)} options...")
+        tickers = {}
+        
+        for qc, symbol, strike, right in qualified_contracts:
+            ticker = self.ib.reqMktData(qc)
+            tickers[(qc, symbol, strike, right)] = ticker
+        
+        # Wait for data to arrive
+        wait_time = 5  # seconds
+        logger.info(f"Waiting for market data ({wait_time} seconds)...")
+        self.ib.sleep(wait_time)
+        
+        # Collect the results organized by symbol
+        results = {symbol: {} for symbol in symbols}
+        
+        for (qc, symbol, strike, right), ticker in tickers.items():
+            # Process the results
+            option_data = {
+                'bid': ticker.bid if hasattr(ticker, 'bid') and ticker.bid > 0 else None,
+                'ask': ticker.ask if hasattr(ticker, 'ask') and ticker.ask > 0 else None,
+                'last': ticker.last if hasattr(ticker, 'last') and ticker.last > 0 else None
+            }
+            
+            # Add to results dictionary
+            if symbol not in results:
+                results[symbol] = {}
+            
+            results[symbol][(strike, right)] = option_data
+            
+            # Cancel the market data subscription
+            self.ib.cancelMktData(qc)
+        
+        logger.info(f"Retrieved option data for {len(results)} symbols")
+        return results 

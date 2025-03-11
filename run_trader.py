@@ -339,16 +339,95 @@ def main():
         
         logger.info("Successfully connected to IB")
         
-        # Get expiration date based on configuration
-        expiration = get_expiration_date()
-        logger.info(f"Using expiration date: {expiration}")
+        # First, let's check if the requested tickers have option chains
+        valid_tickers = []
+        stock_prices = {}
         
-        # Process each ticker
         for ticker in tickers:
-            stock_data = process_stock(ib, ticker, expiration)
-            if stock_data:
-                all_stocks_data.append(stock_data)
-                print_stock_summary(stock_data)
+            logger.debug(f"Getting {ticker} stock price...")
+            price = ib.get_stock_price(ticker)
+            if price is None:
+                logger.error(f"Failed to get {ticker} stock price, skipping this ticker")
+                continue
+            
+            logger.info(f"{ticker} current price: ${price:.2f}")
+            stock_prices[ticker] = price
+            
+            # Check if this ticker has options
+            if VERBOSE:
+                logger.info(f"Checking available expirations for {ticker}...")
+                available_expirations = ib.get_available_expirations(ticker)
+                if not available_expirations:
+                    logger.warning(f"No option expirations available for {ticker}")
+                    continue
+                
+                logger.info(f"Available expirations for {ticker}: {', '.join(available_expirations[:5])}...")
+            
+            valid_tickers.append(ticker)
+        
+        if not valid_tickers:
+            logger.error("No valid tickers with option data found")
+            return
+        
+        # Get expiration date based on configuration
+        user_expiration = get_expiration_date()
+        logger.info(f"User-specified expiration date: {user_expiration}")
+        
+        # Process each ticker individually to ensure we get valid contracts
+        for ticker in valid_tickers:
+            stock_price = stock_prices[ticker]
+            
+            # Calculate appropriate strikes for this stock
+            current_strike = round(stock_price / STRIKE_INTERVAL) * STRIKE_INTERVAL
+            strikes = []
+            
+            # Add strikes below current price
+            for i in range(1, (STRIKE_RANGE // STRIKE_INTERVAL) + 1):
+                strikes.append(current_strike - (i * STRIKE_INTERVAL))
+            
+            # Add current strike
+            strikes.append(current_strike)
+            
+            # Add strikes above current price
+            for i in range(1, (STRIKE_RANGE // STRIKE_INTERVAL) + 1):
+                strikes.append(current_strike + (i * STRIKE_INTERVAL))
+            
+            # Sort strikes
+            strikes.sort()
+            logger.debug(f"Strikes for {ticker}: {strikes}")
+            
+            # Get option data for this ticker
+            logger.info(f"Getting option prices for {ticker}...")
+            option_data = ib.get_multiple_option_prices(ticker, user_expiration, strikes)
+            
+            # Process the results
+            call_options = {}
+            put_options = {}
+            
+            for (strike, right), data in option_data.items():
+                if right == 'C':
+                    bid_str = f"${data['bid']:.2f}" if data['bid'] is not None and data['bid'] > 0 else "N/A"
+                    ask_str = f"${data['ask']:.2f}" if data['ask'] is not None and data['ask'] > 0 else "N/A"
+                    last_str = f"${data['last']:.2f}" if data['last'] is not None and data['last'] > 0 else "N/A"
+                    logger.debug(f"{ticker} {user_expiration} ${strike} Call: Bid={bid_str}, Ask={ask_str}, Last={last_str}")
+                    call_options[strike] = {'bid': bid_str, 'ask': ask_str, 'last': last_str}
+                elif right == 'P':
+                    bid_str = f"${data['bid']:.2f}" if data['bid'] is not None and data['bid'] > 0 else "N/A"
+                    ask_str = f"${data['ask']:.2f}" if data['ask'] is not None and data['ask'] > 0 else "N/A"
+                    last_str = f"${data['last']:.2f}" if data['last'] is not None and data['last'] > 0 else "N/A"
+                    logger.debug(f"{ticker} {user_expiration} ${strike} Put: Bid={bid_str}, Ask={ask_str}, Last={last_str}")
+                    put_options[strike] = {'bid': bid_str, 'ask': ask_str, 'last': last_str}
+            
+            # Create stock data object
+            stock_data = {
+                'ticker': ticker,
+                'stock_price': stock_price,
+                'call_options': call_options,
+                'put_options': put_options
+            }
+            
+            all_stocks_data.append(stock_data)
+            print_stock_summary(stock_data)
         
         # Export all stock data
         if all_stocks_data:
@@ -363,7 +442,7 @@ def main():
             from autotrader.core import create_combined_html_report
             html_path = create_combined_html_report(
                 all_stocks_data,
-                expiration,
+                user_expiration,
                 output_dir=OUTPUT_DIR
             )
             
