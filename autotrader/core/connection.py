@@ -13,6 +13,40 @@ logging.basicConfig(level=logging.INFO,
                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('autotrader.connection')
 
+# Set ib_insync logger to WARNING level to reduce noise
+logging.getLogger('ib_insync').setLevel(logging.WARNING)
+logging.getLogger('ib_insync.wrapper').setLevel(logging.WARNING)
+logging.getLogger('ib_insync.client').setLevel(logging.WARNING)
+logging.getLogger('ib_insync.ticker').setLevel(logging.WARNING)
+
+def suppress_ib_logs():
+    """
+    Suppress verbose logs from the ib_insync library by setting higher log levels
+    """
+    # Base ib_insync loggers
+    logging.getLogger('ib_insync').setLevel(logging.WARNING)
+    logging.getLogger('ib_insync.wrapper').setLevel(logging.WARNING)
+    logging.getLogger('ib_insync.client').setLevel(logging.WARNING)
+    logging.getLogger('ib_insync.ticker').setLevel(logging.WARNING)
+    
+    # Additional ib_insync logger components
+    logging.getLogger('ib_insync.event').setLevel(logging.WARNING)
+    logging.getLogger('ib_insync.util').setLevel(logging.WARNING)
+    logging.getLogger('ib_insync.objects').setLevel(logging.WARNING)
+    logging.getLogger('ib_insync.contract').setLevel(logging.WARNING)
+    logging.getLogger('ib_insync.order').setLevel(logging.WARNING)
+    logging.getLogger('ib_insync.ib').setLevel(logging.WARNING)
+    
+    # Suppress related lower-level modules used by ib_insync
+    logging.getLogger('asyncio').setLevel(logging.WARNING)
+    logging.getLogger('eventkit').setLevel(logging.WARNING)
+    
+    # Return to enable chaining if needed
+    return True
+
+# Call to suppress logs right away
+suppress_ib_logs()
+
 
 class IBConnection:
     """
@@ -36,31 +70,44 @@ class IBConnection:
         self.readonly = readonly
         self.ib = IB()
         self._connected = False
+        
+        # Suppress ib_insync logs when initializing
+        suppress_ib_logs()
     
     def connect(self):
         """
-        Connect to Interactive Brokers
+        Connect to TWS/IB Gateway
         
         Returns:
-            bool: True if connected successfully, False otherwise
+            bool: True if successful, False otherwise
         """
-        if self._connected and self.ib.isConnected():
-            logger.info("Already connected to IB")
-            return True
+        # Suppress logs during connection attempt
+        suppress_ib_logs()
         
         try:
-            logger.info(f"Connecting to IB on {self.host}:{self.port}")
-            self.ib.connect(self.host, self.port, clientId=self.client_id, readonly=self.readonly, timeout=self.timeout)
-            self._connected = self.ib.isConnected()
+            if self._connected and self.ib.isConnected():
+                logger.info(f"Already connected to IB")
+                return True
             
-            if self._connected:
-                logger.info("Successfully connected to IB")
+            logger.info(f"Connecting to IB at {self.host}:{self.port}")
+            
+            # Set read-only mode if requested
+            if self.readonly:
+                self.ib.clientId = self.client_id
+                self.ib.connect(self.host, self.port, clientId=self.client_id, readonly=True, timeout=self.timeout)
             else:
-                logger.error("Failed to connect to IB")
+                self.ib.clientId = self.client_id
+                self.ib.connect(self.host, self.port, clientId=self.client_id, readonly=False, timeout=self.timeout)
             
-            return self._connected
+            self._connected = self.ib.isConnected()
+            if self._connected:
+                logger.info(f"Successfully connected to IB")
+                return True
+            else:
+                logger.error(f"Failed to connect to IB")
+                return False
         except Exception as e:
-            logger.error(f"Error connecting to IB: {e}")
+            logger.error(f"Error connecting to IB: {str(e)}")
             self._connected = False
             return False
     

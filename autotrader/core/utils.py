@@ -111,6 +111,12 @@ def setup_logging(logs_dir='logs', log_prefix='trader', log_level=logging.DEBUG)
     root_logger.addHandler(file_handler)
     root_logger.addHandler(console_handler)
     
+    # Set ib_insync loggers to WARNING level to reduce noise
+    logging.getLogger('ib_insync').setLevel(logging.WARNING)
+    logging.getLogger('ib_insync.wrapper').setLevel(logging.WARNING)
+    logging.getLogger('ib_insync.client').setLevel(logging.WARNING)
+    logging.getLogger('ib_insync.ticker').setLevel(logging.WARNING)
+    
     # Return a logger for the calling module
     return logging.getLogger('autotrader')
 

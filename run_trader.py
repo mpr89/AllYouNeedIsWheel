@@ -15,10 +15,20 @@ root_dir = os.path.dirname(os.path.abspath(__file__))
 if root_dir not in sys.path:
     sys.path.append(root_dir)
 
-from autotrader.core.connection import IBConnection, Option
+# Configure logging - set ib_insync to WARNING level to reduce noise
+logging.getLogger('ib_insync').setLevel(logging.WARNING)
+logging.getLogger('ib_insync.wrapper').setLevel(logging.WARNING)
+logging.getLogger('ib_insync.client').setLevel(logging.WARNING)
+logging.getLogger('ib_insync.ticker').setLevel(logging.WARNING)
+
+# Import from autotrader modules
+from autotrader.core.connection import IBConnection, Option, suppress_ib_logs
 from autotrader.core.processing import SimpleOptionsStrategy, print_stock_summary, format_currency, format_percentage
 from autotrader.core.utils import get_closest_friday, get_next_monthly_expiration, setup_logging, rotate_reports
 from autotrader.config import Config
+
+# Suppress ib_insync logs globally
+suppress_ib_logs()
 
 # Default configuration
 DEFAULT_CONFIG = {
