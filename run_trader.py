@@ -40,7 +40,7 @@ logger.addHandler(console_handler)
 from autotrader.core import IBConnection, export_options_data, create_combined_html_report, export_to_csv
 
 # Configuration
-DEFAULT_TICKERS = ['NVDA', 'TSLA']  # Default tickers to query
+DEFAULT_TICKERS = ['NVDA', 'TSLA', 'AAPL']  # Default tickers to query
 USE_CLOSEST_FRIDAY = True  # Set to False to use monthly expirations instead
 USE_SPECIFIC_DATE = False  # Set to True to use the date below
 SPECIFIC_EXPIRATION = '20250321'  # Format YYYYMMDD
@@ -103,31 +103,17 @@ def get_expiration_date():
     else:
         return get_next_monthly_expiration()
 
-def parse_arguments():
-    """Parse command line arguments"""
-    parser = argparse.ArgumentParser(description='Option Price Reader for Multiple Stocks')
-    
-    # Add command line options that can override the defaults
-    parser.add_argument('--tickers', nargs='+', help='Stock tickers to query (space separated)')
-    parser.add_argument('--expiration', help='Specific expiration date (YYYYMMDD format)')
-    parser.add_argument('--closest-friday', action='store_true', help='Use closest Friday expiration')
-    parser.add_argument('--monthly', action='store_true', help='Use monthly expiration (third Friday)')
-    parser.add_argument('--strike-range', type=int, help='How far from current price to check (in $)')
-    parser.add_argument('--strike-interval', type=int, help='Interval between strikes (in $)')
-    parser.add_argument('--export', choices=['csv', 'html', 'all'], help='Export format')
-    parser.add_argument('--output-dir', help='Directory for output files')
-    parser.add_argument('--verbose', action='store_true', help='Verbose output mode')
-    
-    return parser.parse_args()
-
-def process_stock(ib, ticker, expiration):
+def process_stock(ib_connection, ticker, expiration_date, interval, num_strikes, stock_price=None):
     """
-    Process a single stock ticker to get option data
+    Process a single stock to get option prices
     
     Args:
-        ib: IBConnection instance
+        ib_connection: IBConnection instance
         ticker: Stock ticker symbol
-        expiration: Option expiration date
+        expiration_date: Option expiration date (YYYYMMDD format)
+        interval: Strike price interval
+        num_strikes: Number of strikes to check around current price
+        stock_price: Current stock price (optional, will be fetched if not provided)
         
     Returns:
         dict: Dictionary containing stock price, call options, and put options
@@ -138,66 +124,62 @@ def process_stock(ib, ticker, expiration):
     call_options = {}
     put_options = {}
     
-    # Get stock price
-    logger.debug(f"Getting {ticker} stock price...")
-    stock_price = ib.get_stock_price(ticker)
+    # Get stock price if not provided
     if stock_price is None:
-        logger.error(f"Failed to get {ticker} stock price")
-        return None
+        logger.debug(f"Getting {ticker} stock price...")
+        stock_price = ib_connection.get_stock_price(ticker)
+        if stock_price is None:
+            logger.error(f"Failed to get {ticker} stock price")
+            return None
     
-    logger.info(f"{ticker} current price: ${stock_price:.2f}")
+    logger.info(f"{ticker} current price: ${stock_price}")
     
     # Calculate appropriate strikes (around the current price)
-    # Round to nearest interval
-    current_strike = round(stock_price / STRIKE_INTERVAL) * STRIKE_INTERVAL
-    strikes_to_check = []
+    current_strike = round(stock_price / interval) * interval
+    strikes = []
     
-    # Add strikes below current price
-    for i in range(1, (STRIKE_RANGE // STRIKE_INTERVAL) + 1):
-        strikes_to_check.append(current_strike - (i * STRIKE_INTERVAL))
+    # Add strikes below and above current price
+    for i in range(-num_strikes, num_strikes + 1):
+        strike = current_strike + (i * interval)
+        strikes.append(strike)
     
-    # Add current strike
-    strikes_to_check.append(current_strike)
+    logger.debug(f"Strikes for {ticker}: {strikes}")
+    logger.info(f"Getting option prices for {ticker}...")
     
-    # Add strikes above current price
-    for i in range(1, (STRIKE_RANGE // STRIKE_INTERVAL) + 1):
-        strikes_to_check.append(current_strike + (i * STRIKE_INTERVAL))
+    # Get option data using the correct method name
+    option_data = ib_connection.get_multiple_option_prices(ticker, expiration_date, strikes)
     
-    # Sort strikes
-    strikes_to_check.sort()
-    
-    logger.debug(f"Checking strikes for {ticker}: {strikes_to_check}")
-    
-    # Get option prices for both calls and puts in one batch
-    logger.debug(f"Getting {ticker} option prices (calls and puts)...")
-    option_data = ib.get_multiple_option_prices(ticker, expiration, strikes_to_check)
-    
-    # Process the results
-    logger.debug(f"Processing {ticker} call options:")
-    for strike in strikes_to_check:
+    # Process call options
+    for strike in strikes:
         key = (strike, 'C')
         if key in option_data:
             data = option_data[key]
-            bid_str = f"${data['bid']:.2f}" if data['bid'] is not None and data['bid'] > 0 else "N/A"
-            ask_str = f"${data['ask']:.2f}" if data['ask'] is not None and data['ask'] > 0 else "N/A"
-            last_str = f"${data['last']:.2f}" if data['last'] is not None and data['last'] > 0 else "N/A"
-            logger.debug(f"{ticker} {expiration} ${strike} Call: Bid={bid_str}, Ask={ask_str}, Last={last_str}")
+            bid = data.get('bid', None)
+            ask = data.get('ask', None)
+            last = data.get('last', None)
+            
+            bid_str = f"${bid:.2f}" if bid is not None and bid > 0 else "N/A"
+            ask_str = f"${ask:.2f}" if ask is not None and ask > 0 else "N/A"
+            last_str = f"${last:.2f}" if last is not None and last > 0 else "N/A"
+            
+            logger.debug(f"{ticker} {expiration_date} ${strike} Call: Bid={bid_str}, Ask={ask_str}, Last={last_str}")
             call_options[strike] = {'bid': bid_str, 'ask': ask_str, 'last': last_str}
-        else:
-            logger.warning(f"Could not get data for {ticker} {expiration} ${strike} Call")
     
-    logger.debug(f"Processing {ticker} put options:")
-    for strike in strikes_to_check:
+    # Process put options
+    for strike in strikes:
         key = (strike, 'P')
         if key in option_data:
             data = option_data[key]
-            bid_str = f"${data['bid']:.2f}" if data['bid'] is not None and data['bid'] > 0 else "N/A"
-            ask_str = f"${data['ask']:.2f}" if data['ask'] is not None and data['ask'] > 0 else "N/A"
-            last_str = f"${data['last']:.2f}" if data['last'] is not None and data['last'] > 0 else "N/A"
-            logger.debug(f"{ticker} {expiration} ${strike} Put: Bid={bid_str}, Ask={ask_str}, Last={last_str}")
+            bid = data.get('bid', None)
+            ask = data.get('ask', None)
+            last = data.get('last', None)
+            
+            bid_str = f"${bid:.2f}" if bid is not None and bid > 0 else "N/A"
+            ask_str = f"${ask:.2f}" if ask is not None and ask > 0 else "N/A"
+            last_str = f"${last:.2f}" if last is not None and last > 0 else "N/A"
+            
+            logger.debug(f"{ticker} {expiration_date} ${strike} Put: Bid={bid_str}, Ask={ask_str}, Last={last_str}")
             put_options[strike] = {'bid': bid_str, 'ask': ask_str, 'last': last_str}
-        else:
-            logger.warning(f"Could not get data for {ticker} {expiration} ${strike} Put")
     
     return {
         'ticker': ticker,
@@ -288,178 +270,104 @@ def main():
     """
     Main function to get options prices for multiple stocks
     """
-    # Parse command line arguments
-    args = parse_arguments()
+    # Setup argument parser
+    parser = argparse.ArgumentParser(description="Run the stock option trader.")
+    parser.add_argument("--tickers", help="Comma-separated list of stock tickers to process", default="NVDA,TSLA")
+    parser.add_argument("--port", type=int, help="TWS port", default=7497)
+    parser.add_argument("--host", help="TWS host", default="127.0.0.1")
+    parser.add_argument("--interval", type=int, help="Strike price interval", default=5)
+    parser.add_argument("--num_strikes", type=int, help="Number of strikes around current price", default=2)
+    # Changed to a date in the current year (2025) for better option data availability
+    parser.add_argument("--expiration_date", help="Expiration date in format YYYYMMDD", default="20250321")
+    parser.add_argument("--output_dir", help="Directory for output files", default="reports")
+    parser.add_argument("--export_format", help="Export format: csv, html, or all", default="html")
+    args = parser.parse_args()
     
-    # Override defaults with command line arguments if provided
-    global USE_CLOSEST_FRIDAY, USE_SPECIFIC_DATE, SPECIFIC_EXPIRATION
-    global VERBOSE, STRIKE_RANGE, STRIKE_INTERVAL, EXPORT_FORMAT, OUTPUT_DIR
-    global DEFAULT_TICKERS
-    
-    # Get tickers to process
-    tickers = DEFAULT_TICKERS
-    if args.tickers:
-        tickers = args.tickers
-    
-    if args.expiration:
-        USE_SPECIFIC_DATE = True
-        SPECIFIC_EXPIRATION = args.expiration
-        USE_CLOSEST_FRIDAY = False
-    elif args.closest_friday:
-        USE_CLOSEST_FRIDAY = True
-        USE_SPECIFIC_DATE = False
-    elif args.monthly:
-        USE_CLOSEST_FRIDAY = False
-        USE_SPECIFIC_DATE = False
-    
-    if args.verbose is not None:
-        VERBOSE = args.verbose
-    if args.strike_range is not None:
-        STRIKE_RANGE = args.strike_range
-    if args.strike_interval is not None:
-        STRIKE_INTERVAL = args.strike_interval
-    if args.export is not None:
-        EXPORT_FORMAT = args.export
-    if args.output_dir is not None:
-        OUTPUT_DIR = args.output_dir
+    # Parse tickers list
+    tickers = [ticker.strip() for ticker in args.tickers.split(',')]
     
     logger.info(f"Starting options reader for tickers: {', '.join(tickers)}...")
     
     # Initialize connection to IB
-    ib = IBConnection(readonly=True)
+    ib = IBConnection(readonly=True, host=args.host, port=args.port)
     
     # List to store all stock data
     all_stocks_data = []
     
     try:
-        # Connect to IB (default port 7497 for paper trading, 7496 for live)
+        # Connect to IB
         if not ib.connect():
             logger.error("Failed to connect to IB. Make sure TWS/IB Gateway is running and API connections are enabled.")
             return
         
         logger.info("Successfully connected to IB")
         
-        # First, let's check if the requested tickers have option chains
+        # Process each ticker
         valid_tickers = []
         stock_prices = {}
         
+        # Get stock prices for all tickers first
         for ticker in tickers:
             logger.debug(f"Getting {ticker} stock price...")
-            price = ib.get_stock_price(ticker)
-            if price is None:
-                logger.error(f"Failed to get {ticker} stock price, skipping this ticker")
+            stock_price = ib.get_stock_price(ticker)
+            if stock_price is None:
+                logger.error(f"Failed to get {ticker} stock price, skipping...")
                 continue
-            
-            logger.info(f"{ticker} current price: ${price:.2f}")
-            stock_prices[ticker] = price
-            
-            # Check if this ticker has options
-            if VERBOSE:
-                logger.info(f"Checking available expirations for {ticker}...")
-                available_expirations = ib.get_available_expirations(ticker)
-                if not available_expirations:
-                    logger.warning(f"No option expirations available for {ticker}")
-                    continue
                 
-                logger.info(f"Available expirations for {ticker}: {', '.join(available_expirations[:5])}...")
-            
+            logger.info(f"{ticker} current price: ${stock_price}")
+            stock_prices[ticker] = stock_price
             valid_tickers.append(ticker)
         
-        if not valid_tickers:
-            logger.error("No valid tickers with option data found")
-            return
+        # Find closest Friday to the target date (default to closest Friday from today)
+        if args.expiration_date:
+            target_date = datetime.strptime(args.expiration_date, "%Y%m%d").date()
+        else:
+            target_date = datetime.now().date()
         
-        # Get expiration date based on configuration
-        user_expiration = get_expiration_date()
-        logger.info(f"User-specified expiration date: {user_expiration}")
+        # Find the closest Friday to the target date
+        days_to_friday = (4 - target_date.weekday()) % 7
+        closest_friday = target_date + timedelta(days=days_to_friday)
         
-        # Process each ticker individually to ensure we get valid contracts
+        formatted_date = target_date.strftime("%Y%m%d")
+        if days_to_friday > 0:
+            logger.info(f"Using closest Friday: {closest_friday}")
+            logger.info(f"User-specified expiration date: {formatted_date}")
+        
+        # Process each ticker
         for ticker in valid_tickers:
-            stock_price = stock_prices[ticker]
-            
-            # Calculate appropriate strikes for this stock
-            current_strike = round(stock_price / STRIKE_INTERVAL) * STRIKE_INTERVAL
-            strikes = []
-            
-            # Add strikes below current price
-            for i in range(1, (STRIKE_RANGE // STRIKE_INTERVAL) + 1):
-                strikes.append(current_strike - (i * STRIKE_INTERVAL))
-            
-            # Add current strike
-            strikes.append(current_strike)
-            
-            # Add strikes above current price
-            for i in range(1, (STRIKE_RANGE // STRIKE_INTERVAL) + 1):
-                strikes.append(current_strike + (i * STRIKE_INTERVAL))
-            
-            # Sort strikes
-            strikes.sort()
-            logger.debug(f"Strikes for {ticker}: {strikes}")
-            
-            # Get option data for this ticker
-            logger.info(f"Getting option prices for {ticker}...")
-            option_data = ib.get_multiple_option_prices(ticker, user_expiration, strikes)
-            
-            # Process the results
-            call_options = {}
-            put_options = {}
-            
-            for (strike, right), data in option_data.items():
-                if right == 'C':
-                    bid_str = f"${data['bid']:.2f}" if data['bid'] is not None and data['bid'] > 0 else "N/A"
-                    ask_str = f"${data['ask']:.2f}" if data['ask'] is not None and data['ask'] > 0 else "N/A"
-                    last_str = f"${data['last']:.2f}" if data['last'] is not None and data['last'] > 0 else "N/A"
-                    logger.debug(f"{ticker} {user_expiration} ${strike} Call: Bid={bid_str}, Ask={ask_str}, Last={last_str}")
-                    call_options[strike] = {'bid': bid_str, 'ask': ask_str, 'last': last_str}
-                elif right == 'P':
-                    bid_str = f"${data['bid']:.2f}" if data['bid'] is not None and data['bid'] > 0 else "N/A"
-                    ask_str = f"${data['ask']:.2f}" if data['ask'] is not None and data['ask'] > 0 else "N/A"
-                    last_str = f"${data['last']:.2f}" if data['last'] is not None and data['last'] > 0 else "N/A"
-                    logger.debug(f"{ticker} {user_expiration} ${strike} Put: Bid={bid_str}, Ask={ask_str}, Last={last_str}")
-                    put_options[strike] = {'bid': bid_str, 'ask': ask_str, 'last': last_str}
-            
-            # Create stock data object
-            stock_data = {
-                'ticker': ticker,
-                'stock_price': stock_price,
-                'call_options': call_options,
-                'put_options': put_options
-            }
-            
-            all_stocks_data.append(stock_data)
-            print_stock_summary(stock_data)
-        
-        # Export all stock data
-        if all_stocks_data:
-            # Generate timestamp for filenames
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            
-            # Create output directory if it doesn't exist
-            os.makedirs(OUTPUT_DIR, exist_ok=True)
-            
-            # Only create the combined HTML report
-            logger.info(f"Generating consolidated HTML report...")
-            from autotrader.core import create_combined_html_report
-            html_path = create_combined_html_report(
-                all_stocks_data,
-                user_expiration,
-                output_dir=OUTPUT_DIR
+            stock_data = process_stock(
+                ib, 
+                ticker, 
+                formatted_date, 
+                args.interval, 
+                args.num_strikes, 
+                stock_prices[ticker]
             )
             
-            logger.info(f"Exported consolidated HTML report: {html_path}")
+            if stock_data:
+                all_stocks_data.append(stock_data)
+                print_stock_summary(stock_data)
+        
+        # Export data if we have results
+        if all_stocks_data:
+            logger.info("Generating consolidated HTML report...")
+            # Create output directory if it doesn't exist
+            os.makedirs(args.output_dir, exist_ok=True)
             
-            # Open HTML file in browser if on a desktop
-            if os.name != 'nt':  # Not on Windows
-                try:
-                    import webbrowser
-                    webbrowser.open('file://' + os.path.abspath(html_path))
-                except:
-                    pass  # Silently fail if browser can't be opened
+            # Create a consolidated HTML report
+            report_path = create_combined_html_report(
+                all_stocks_data,
+                formatted_date,
+                output_dir=args.output_dir
+            )
             
+            logger.info(f"Exported consolidated HTML report: {report_path}")
     except Exception as e:
-        logger.exception(f"Error: {e}")
+        logger.error(f"Error: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
     finally:
-        # Disconnect
+        # Disconnect from IB
         ib.disconnect()
         logger.info("Disconnected from IB")
 
