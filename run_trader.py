@@ -7,11 +7,43 @@ import sys
 import os
 import logging
 import argparse
+import glob
 from datetime import datetime, timedelta
 
 # Configure logging
 # Create logs directory if it doesn't exist
 os.makedirs('logs', exist_ok=True)
+
+# Log rotation function to keep only the most recent log files
+def rotate_logs(logs_dir='logs', max_logs=5):
+    """
+    Rotate log files, keeping only the specified number of most recent logs.
+    
+    Args:
+        logs_dir (str): Directory containing log files
+        max_logs (int): Maximum number of log files to keep
+    """
+    # Get all log files in the logs directory
+    log_files = glob.glob(os.path.join(logs_dir, 'trader_*.log'))
+    
+    # If we don't have too many logs yet, no need to delete any
+    if len(log_files) <= max_logs:
+        return
+    
+    # Sort log files by modification time (newest first)
+    sorted_logs = sorted(log_files, key=os.path.getmtime, reverse=True)
+    
+    # Keep only the most recent logs, delete others
+    logs_to_delete = sorted_logs[max_logs:]
+    for log_file in logs_to_delete:
+        try:
+            os.remove(log_file)
+            print(f"Deleted old log file: {log_file}")
+        except Exception as e:
+            print(f"Error deleting log file {log_file}: {e}")
+
+# Rotate logs on startup - keep only the 5 most recent log files
+rotate_logs(max_logs=5)
 
 # Set up file handler for all logs
 log_file = os.path.join('logs', f'trader_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log')
