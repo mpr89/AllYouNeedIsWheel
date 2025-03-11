@@ -272,7 +272,7 @@ def main():
     """
     # Setup argument parser
     parser = argparse.ArgumentParser(description="Run the stock option trader.")
-    parser.add_argument("--tickers", help="Comma-separated list of stock tickers to process", default="NVDA,TSLA")
+    parser.add_argument("--tickers", help="Comma-separated list of stock tickers to process", default="NVDA,TSLA,AAPL")
     parser.add_argument("--port", type=int, help="TWS port", default=7497)
     parser.add_argument("--host", help="TWS host", default="127.0.0.1")
     parser.add_argument("--interval", type=int, help="Strike price interval", default=5)
@@ -304,19 +304,18 @@ def main():
         
         # Process each ticker
         valid_tickers = []
-        stock_prices = {}
         
-        # Get stock prices for all tickers first
-        for ticker in tickers:
-            logger.debug(f"Getting {ticker} stock price...")
-            stock_price = ib.get_stock_price(ticker)
-            if stock_price is None:
+        # Get stock prices for all tickers in a batch instead of one by one
+        logger.info(f"Getting stock prices for all tickers in batch: {', '.join(tickers)}")
+        stock_prices = ib.get_multiple_stock_prices(tickers)
+        
+        # Filter valid tickers that have prices
+        for ticker, price in stock_prices.items():
+            if price is not None:
+                logger.info(f"{ticker} current price: ${price}")
+                valid_tickers.append(ticker)
+            else:
                 logger.error(f"Failed to get {ticker} stock price, skipping...")
-                continue
-                
-            logger.info(f"{ticker} current price: ${stock_price}")
-            stock_prices[ticker] = stock_price
-            valid_tickers.append(ticker)
         
         # Find closest Friday to the target date (default to closest Friday from today)
         if args.expiration_date:

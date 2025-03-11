@@ -84,61 +84,175 @@ class IBConnection:
     
     def get_stock_price(self, symbol):
         """
-        Get current stock price
+        Get the current price of a stock
         
         Args:
             symbol (str): Stock symbol
             
         Returns:
-            float: Current stock price
+            float: Current stock price or None if error
         """
         if not self.is_connected():
             logger.warning("Not connected to IB. Attempting to connect...")
             if not self.connect():
                 return None
-            
-        contract = Contract()
-        contract.symbol = symbol
-        contract.secType = 'STK'
-        contract.exchange = 'SMART'
-        contract.currency = 'USD'
         
         logger.info(f"Qualifying contract for {symbol}...")
-        self.ib.qualifyContracts(contract)
-        logger.info(f"Contract qualified: {contract}")
         
-        # Request market data with valid generic ticks for stocks
-        # Using only the valid ticks from the error message
-        logger.info(f"Requesting market data for {symbol}...")
-        ticker = self.ib.reqMktData(contract, genericTickList="100,101,105,106,165,221,225,233,236,258,318,411,456")
-        logger.info("Waiting for market data (5 seconds)...")
-        self.ib.sleep(5)  # Wait longer for data
+        # Create a stock contract
+        contract = Contract(symbol=symbol, secType='STK', exchange='SMART', currency='USD')
         
-        logger.info(f"Ticker data received: last={ticker.last}, close={ticker.close}, bid={ticker.bid}, ask={ticker.ask}, lastRTHTrade={ticker.lastRTHTrade if hasattr(ticker, 'lastRTHTrade') else 'N/A'}")
+        try:
+            # Qualify the contract
+            qualified_contracts = self.ib.qualifyContracts(contract)
+            if not qualified_contracts:
+                logger.error(f"Failed to qualify contract for {symbol}")
+                return None
+            
+            qualified_contract = qualified_contracts[0]
+            logger.info(f"Contract qualified: {qualified_contract}")
+            
+            # Request market data
+            logger.info(f"Requesting market data for {symbol}...")
+            ticker = self.ib.reqMktData(qualified_contract)
+            
+            # Wait for market data to be received
+            wait_time = 5  # seconds
+            logger.info(f"Waiting for market data ({wait_time} seconds)...")
+            self.ib.sleep(wait_time)
+            
+            # Get the last price
+            last_price = ticker.last if ticker.last else (ticker.close if ticker.close else None)
+            bid_price = ticker.bid if ticker.bid else None
+            ask_price = ticker.ask if ticker.ask else None
+            last_rth_trade = ticker.lastRTHTrade.price if hasattr(ticker, 'lastRTHTrade') and ticker.lastRTHTrade else None
+            
+            logger.info(f"Ticker data received: last={last_price}, close={ticker.close}, bid={bid_price}, ask={ask_price}, lastRTHTrade={last_rth_trade}")
+            
+            # If no last price is available, check other prices
+            if last_price is None:
+                if bid_price and ask_price:
+                    # Use midpoint of bid-ask spread
+                    last_price = (bid_price + ask_price) / 2
+                    logger.info(f"Using bid-ask midpoint: {last_price}")
+                elif bid_price:
+                    last_price = bid_price
+                    logger.info(f"Using bid price: {last_price}")
+                elif ask_price:
+                    last_price = ask_price
+                    logger.info(f"Using ask price: {last_price}")
+                elif last_rth_trade:
+                    last_price = last_rth_trade
+                    logger.info(f"Using last RTH trade: {last_price}")
+            
+            # Cancel the market data subscription
+            logger.info(f"Canceling market data subscription for {symbol}")
+            self.ib.cancelMktData(qualified_contract)
+            
+            if last_price is None:
+                logger.error(f"Could not get price for {symbol}")
+                return None
+                
+            logger.info(f"Using last price: {last_price}")
+            return last_price
+            
+        except Exception as e:
+            logger.error(f"Error getting {symbol} price: {e}")
+            return None
+            
+    def get_multiple_stock_prices(self, symbols):
+        """
+        Get the current prices of multiple stocks in one batch
         
-        price = None
-        if hasattr(ticker, 'lastRTHTrade') and ticker.lastRTHTrade > 0:
-            price = ticker.lastRTHTrade
-            logger.info(f"Using last RTH trade price: {price}")
-        elif ticker.last > 0:
-            price = ticker.last
-            logger.info(f"Using last price: {price}")
-        elif ticker.close > 0:
-            price = ticker.close
-            logger.info(f"Using close price: {price}")
-        elif ticker.bid > 0 and ticker.ask > 0:
-            price = (ticker.bid + ticker.ask) / 2
-            logger.info(f"Using mid price: {price}")
-        else:
-            # Fallback to a fixed price for testing if no data is available
-            logger.warning(f"Could not determine price for {symbol}, using a default test price")
-            price = 950.0  # NVDA approximate price, change as needed
+        Args:
+            symbols (list): List of stock symbols
+            
+        Returns:
+            dict: Dictionary mapping symbols to their current prices (None for failed retrievals)
+        """
+        if not self.is_connected():
+            logger.warning("Not connected to IB. Attempting to connect...")
+            if not self.connect():
+                return {}
         
-        # Cancel market data subscription
-        logger.info(f"Canceling market data subscription for {symbol}")
-        self.ib.cancelMktData(contract)
+        results = {}
+        qualified_contracts = []
+        symbol_to_contract = {}
         
-        return price
+        # Step 1: Create and qualify all contracts
+        logger.info(f"Qualifying contracts for {len(symbols)} stocks...")
+        for symbol in symbols:
+            # Create a stock contract
+            contract = Contract(symbol=symbol, secType='STK', exchange='SMART', currency='USD')
+            
+            try:
+                # Qualify the contract
+                qualified = self.ib.qualifyContracts(contract)
+                if not qualified:
+                    logger.error(f"Failed to qualify contract for {symbol}")
+                    results[symbol] = None
+                    continue
+                
+                qualified_contract = qualified[0]
+                logger.info(f"Contract qualified: {qualified_contract}")
+                
+                qualified_contracts.append(qualified_contract)
+                symbol_to_contract[qualified_contract.symbol] = qualified_contract
+                
+            except Exception as e:
+                logger.error(f"Error qualifying contract for {symbol}: {e}")
+                results[symbol] = None
+        
+        # Step 2: Request market data for all qualified contracts
+        if qualified_contracts:
+            tickers = {}
+            logger.info(f"Requesting market data for {len(qualified_contracts)} stocks...")
+            
+            # Request market data for all contracts
+            for contract in qualified_contracts:
+                symbol = contract.symbol
+                ticker = self.ib.reqMktData(contract)
+                tickers[symbol] = ticker
+            
+            # Wait for market data to be received
+            wait_time = 5  # seconds
+            logger.info(f"Waiting for market data ({wait_time} seconds)...")
+            self.ib.sleep(wait_time)
+            
+            # Process the received data
+            for symbol, ticker in tickers.items():
+                # Get the last price
+                last_price = ticker.last if ticker.last else (ticker.close if ticker.close else None)
+                bid_price = ticker.bid if ticker.bid else None
+                ask_price = ticker.ask if ticker.ask else None
+                last_rth_trade = ticker.lastRTHTrade.price if hasattr(ticker, 'lastRTHTrade') and ticker.lastRTHTrade else None
+                
+                logger.info(f"Ticker data for {symbol}: last={last_price}, close={ticker.close}, bid={bid_price}, ask={ask_price}, lastRTHTrade={last_rth_trade}")
+                
+                # If no last price is available, check other prices
+                if last_price is None:
+                    if bid_price and ask_price:
+                        # Use midpoint of bid-ask spread
+                        last_price = (bid_price + ask_price) / 2
+                        logger.info(f"Using bid-ask midpoint for {symbol}: {last_price}")
+                    elif bid_price:
+                        last_price = bid_price
+                        logger.info(f"Using bid price for {symbol}: {last_price}")
+                    elif ask_price:
+                        last_price = ask_price
+                        logger.info(f"Using ask price for {symbol}: {last_price}")
+                    elif last_rth_trade:
+                        last_price = last_rth_trade
+                        logger.info(f"Using last RTH trade for {symbol}: {last_price}")
+                
+                results[symbol] = last_price
+                
+                # Cancel the market data subscription
+                contract = symbol_to_contract.get(symbol)
+                if contract:
+                    self.ib.cancelMktData(contract)
+        
+        return results
     
     def get_option_chain(self, symbol, right='C', exchange='SMART'):
         """
