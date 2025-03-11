@@ -37,7 +37,7 @@ logger.addHandler(file_handler)
 logger.addHandler(console_handler)
 
 # Import the IBConnection class and export functions
-from autotrader.core import IBConnection, export_options_data, create_combined_html_report
+from autotrader.core import IBConnection, export_options_data, create_combined_html_report, export_to_csv
 
 # Configuration
 DEFAULT_TICKERS = ['NVDA', 'TSLA']  # Default tickers to query
