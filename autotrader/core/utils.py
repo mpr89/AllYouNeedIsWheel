@@ -119,52 +119,73 @@ def get_closest_friday():
     Get the closest Friday from today
     
     Returns:
-        str: Date string in format YYYYMMDD
+        datetime.date: Date of the closest Friday
     """
-    today = datetime.now()
-    # Find days until Friday (weekday 4)
-    days_until_friday = (4 - today.weekday()) % 7
+    today = datetime.now().date()
     
-    # If today is Friday, use next Friday
-    if days_until_friday == 0:
-        days_until_friday = 7
+    # Get the day of the week (0 is Monday, 4 is Friday)
+    weekday = today.weekday()
     
-    closest_friday = today + timedelta(days=days_until_friday)
-    logger.info(f"Using closest Friday: {closest_friday.strftime('%Y-%m-%d')}")
-    return closest_friday.strftime('%Y%m%d')
+    # Calculate days until Friday
+    if weekday < 4:  # Monday to Thursday
+        days_to_add = 4 - weekday
+    elif weekday == 4:  # Friday
+        days_to_add = 0
+    else:  # Weekend
+        days_to_add = 4 + (7 - weekday)  # Next Friday
+    
+    closest_friday = today + timedelta(days=days_to_add)
+    return closest_friday
 
 def get_next_monthly_expiration():
     """
-    Get the nearest third Friday (monthly expiration)
+    Get the next monthly options expiration date (3rd Friday of the month)
     
     Returns:
-        str: Date string in format YYYYMMDD
+        str: Next monthly expiration date in YYYYMMDD format
     """
-    today = datetime.now()
+    today = datetime.now().date()
     
-    # Find the next third Friday of the month
-    # First, find the first day of the current month
-    first_day = datetime(today.year, today.month, 1)
+    # Start with the current month
+    year = today.year
+    month = today.month
     
-    # Find the first Friday
-    days_until_friday = (4 - first_day.weekday()) % 7
-    first_friday = first_day + timedelta(days=days_until_friday)
+    # Find the first day of the month
+    first_day = datetime(year, month, 1).date()
     
-    # Third Friday is 14 days after the first Friday
+    # Find the first Friday of the month
+    weekday = first_day.weekday()
+    if weekday < 4:  # Monday to Thursday
+        days_to_add = 4 - weekday
+    else:  # Friday to Sunday
+        days_to_add = 4 + (7 - weekday)
+    
+    first_friday = first_day + timedelta(days=days_to_add)
+    
+    # The third Friday is 14 days after the first Friday
     third_friday = first_friday + timedelta(days=14)
     
-    # If we've passed the third Friday of this month, go to next month
-    if today > third_friday:
-        if today.month == 12:
-            next_month = datetime(today.year + 1, 1, 1)
+    # If the third Friday is in the past, move to next month
+    if third_friday < today:
+        if month == 12:
+            year += 1
+            month = 1
         else:
-            next_month = datetime(today.year, today.month + 1, 1)
+            month += 1
+            
+        first_day = datetime(year, month, 1).date()
         
-        days_until_friday = (4 - next_month.weekday()) % 7
-        first_friday = next_month + timedelta(days=days_until_friday)
+        # Find the first Friday of the next month
+        weekday = first_day.weekday()
+        if weekday < 4:  # Monday to Thursday
+            days_to_add = 4 - weekday
+        else:  # Friday to Sunday
+            days_to_add = 4 + (7 - weekday)
+        
+        first_friday = first_day + timedelta(days=days_to_add)
         third_friday = first_friday + timedelta(days=14)
     
-    logger.info(f"Using next monthly expiration: {third_friday.strftime('%Y-%m-%d')}")
+    # Format as YYYYMMDD
     return third_friday.strftime('%Y%m%d')
 
 def parse_date_string(date_str):

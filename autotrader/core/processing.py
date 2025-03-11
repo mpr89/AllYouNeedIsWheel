@@ -40,7 +40,7 @@ def process_stock(ib_connection, ticker, expiration_date, interval, num_strikes,
         if portfolio and ticker in portfolio.get('positions', {}):
             stock_price = portfolio['positions'][ticker].get('market_price')
             if stock_price is not None and not pd.isna(stock_price):
-                logger.info(f"Using market price from portfolio for {ticker}: ${stock_price:.2f}")
+                pass  # Using market price from portfolio
         
         # If still no price, use mock data
         if stock_price is None or pd.isna(stock_price):
@@ -54,8 +54,6 @@ def process_stock(ib_connection, ticker, expiration_date, interval, num_strikes,
             }
             stock_price = mock_prices.get(ticker, 100.0)
             logger.warning(f"Could not get real price for {ticker}, using mock price: ${stock_price:.2f}")
-        
-    logger.info(f"Current price for {ticker}: ${stock_price:.2f}")
     
     # Calculate recommended strike prices (20% below and 20% above)
     put_strike = int(stock_price * 0.8 / interval) * interval
@@ -76,8 +74,6 @@ def process_stock(ib_connection, ticker, expiration_date, interval, num_strikes,
             
         if pd.isna(position_data.get('unrealized_pnl')):
             position_data['unrealized_pnl'] = position_data['market_value'] - (position_data['avg_cost'] * position_shares)
-            
-        logger.info(f"Found existing position for {ticker}: {position_shares} shares @ ${position_data['avg_cost']:.2f}")
     
     # Determine if we should recommend covered calls for existing positions
     call_action = "BUY"
@@ -123,7 +119,6 @@ def process_stock(ib_connection, ticker, expiration_date, interval, num_strikes,
         put_ask = round(put_ask * 100) / 100
         
         put_data = {'bid': put_bid, 'ask': put_ask, 'last': (put_bid + put_ask) / 2}
-        logger.warning(f"Using mock option data for {ticker} PUT @ ${put_strike}")
         
     options_data[f"{put_strike}_P"] = put_data
         
@@ -160,7 +155,6 @@ def process_stock(ib_connection, ticker, expiration_date, interval, num_strikes,
         call_ask = round(call_ask * 100) / 100
         
         call_data = {'bid': call_bid, 'ask': call_ask, 'last': (call_bid + call_ask) / 2}
-        logger.warning(f"Using mock option data for {ticker} CALL @ ${call_strike}")
         
     options_data[f"{call_strike}_C"] = call_data
     
@@ -405,25 +399,22 @@ def get_strikes_around_price(price, interval, num_strikes):
 
 def open_in_browser(file_path):
     """
-    Opens the given file path in the default web browser.
+    Open a file in the default web browser
     
     Args:
-        file_path (str): Path to the file to open in browser
+        file_path (str): Path to the file to open
         
     Returns:
         bool: True if successful, False otherwise
     """
-    logger = logging.getLogger(__name__)
-    
-    if not os.path.exists(file_path):
-        logger.error(f"Cannot open in browser: File not found: {file_path}")
-        return False
-    
     try:
+        if not os.path.exists(file_path):
+            logger.error(f"File not found: {file_path}")
+            return False
+            
         url = 'file://' + os.path.abspath(file_path)
-        logger.info(f"Opening in browser: {url}")
         webbrowser.open(url)
         return True
     except Exception as e:
-        logger.error(f"Failed to open browser: {e}")
+        logger.error(f"Error opening file in browser: {e}")
         return False 

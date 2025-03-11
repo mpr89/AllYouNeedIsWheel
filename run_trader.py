@@ -49,12 +49,9 @@ def main():
     
     try:
         # Connect to IB
-        logger.info(f"Connecting to IB on {args.ib_host}:{args.ib_port}")
         if not ib.connect():
             logger.error("Failed to connect to IB")
             return
-        
-        logger.info("Successfully connected to IB")
         
         # Get current date and target expiration date
         today = datetime.now().date()
@@ -70,13 +67,8 @@ def main():
         logger.info(f"Using expiration date: {expiration_date}")
         
         # Fetch portfolio data
-        logger.info("Fetching portfolio data...")
         portfolio = ib.get_portfolio()
-        if portfolio:
-            logger.info(f"Portfolio value: ${portfolio['account_value']:.2f}")
-            logger.info(f"Available cash: ${portfolio['available_cash']:.2f}")
-            logger.info(f"Positions: {len(portfolio['positions'])} stocks")
-        else:
+        if portfolio is None:
             logger.warning("Could not retrieve portfolio data")
             portfolio = {
                 'account_value': 0,
@@ -94,7 +86,6 @@ def main():
                 logger.warning(f"Could not get price for {ticker}, skipping")
                 continue
                 
-            logger.info(f"Processing {ticker} at ${stock_prices[ticker]:.2f}")
             stock_data = process_stock(
                 ib, 
                 ticker, 
@@ -111,7 +102,6 @@ def main():
         
         # Export data if we have results
         if all_stocks_data:
-            logger.info("Generating consolidated HTML report...")
             # Create output directory if it doesn't exist
             os.makedirs(args.output_dir, exist_ok=True)
             
@@ -137,7 +127,6 @@ def main():
     finally:
         # Disconnect from IB
         ib.disconnect()
-        logger.info("Disconnected from IB")
 
 if __name__ == "__main__":
     main() 

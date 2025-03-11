@@ -97,12 +97,10 @@ class IBConnection:
             if not self.connect():
                 return None
         
-        logger.info(f"Qualifying contract for {symbol}...")
-        
-        # Create a stock contract
-        contract = Contract(symbol=symbol, secType='STK', exchange='SMART', currency='USD')
-        
         try:
+            # Create a stock contract
+            contract = Contract(symbol=symbol, secType='STK', exchange='SMART', currency='USD')
+            
             # Qualify the contract
             qualified_contracts = self.ib.qualifyContracts(contract)
             if not qualified_contracts:
@@ -110,15 +108,12 @@ class IBConnection:
                 return None
             
             qualified_contract = qualified_contracts[0]
-            logger.info(f"Contract qualified: {qualified_contract}")
             
             # Request market data
-            logger.info(f"Requesting market data for {symbol}...")
             ticker = self.ib.reqMktData(qualified_contract)
             
             # Wait for market data to be received
             wait_time = 5  # seconds
-            logger.info(f"Waiting for market data ({wait_time} seconds)...")
             self.ib.sleep(wait_time)
             
             # Get the last price
@@ -127,33 +122,25 @@ class IBConnection:
             ask_price = ticker.ask if ticker.ask else None
             last_rth_trade = ticker.lastRTHTrade.price if hasattr(ticker, 'lastRTHTrade') and ticker.lastRTHTrade else None
             
-            logger.info(f"Ticker data received: last={last_price}, close={ticker.close}, bid={bid_price}, ask={ask_price}, lastRTHTrade={last_rth_trade}")
-            
             # If no last price is available, check other prices
             if last_price is None:
                 if bid_price and ask_price:
                     # Use midpoint of bid-ask spread
                     last_price = (bid_price + ask_price) / 2
-                    logger.info(f"Using bid-ask midpoint: {last_price}")
                 elif bid_price:
                     last_price = bid_price
-                    logger.info(f"Using bid price: {last_price}")
                 elif ask_price:
                     last_price = ask_price
-                    logger.info(f"Using ask price: {last_price}")
                 elif last_rth_trade:
                     last_price = last_rth_trade
-                    logger.info(f"Using last RTH trade: {last_price}")
             
             # Cancel the market data subscription
-            logger.info(f"Canceling market data subscription for {symbol}")
             self.ib.cancelMktData(qualified_contract)
             
             if last_price is None:
                 logger.error(f"Could not get price for {symbol}")
                 return None
                 
-            logger.info(f"Using last price: {last_price}")
             return last_price
             
         except Exception as e:
@@ -180,7 +167,6 @@ class IBConnection:
         symbol_to_contract = {}
         
         # Step 1: Create and qualify all contracts
-        logger.info(f"Qualifying contracts for {len(symbols)} stocks...")
         for symbol in symbols:
             # Create a stock contract
             contract = Contract(symbol=symbol, secType='STK', exchange='SMART', currency='USD')
@@ -194,7 +180,6 @@ class IBConnection:
                     continue
                 
                 qualified_contract = qualified[0]
-                logger.info(f"Contract qualified: {qualified_contract}")
                 
                 qualified_contracts.append(qualified_contract)
                 symbol_to_contract[qualified_contract.symbol] = qualified_contract
@@ -206,7 +191,6 @@ class IBConnection:
         # Step 2: Request market data for all qualified contracts
         if qualified_contracts:
             tickers = {}
-            logger.info(f"Requesting market data for {len(qualified_contracts)} stocks...")
             
             # Request market data for all contracts
             for contract in qualified_contracts:
@@ -216,7 +200,6 @@ class IBConnection:
             
             # Wait for market data to be received
             wait_time = 5  # seconds
-            logger.info(f"Waiting for market data ({wait_time} seconds)...")
             self.ib.sleep(wait_time)
             
             # Process the received data
@@ -227,23 +210,17 @@ class IBConnection:
                 ask_price = ticker.ask if ticker.ask else None
                 last_rth_trade = ticker.lastRTHTrade.price if hasattr(ticker, 'lastRTHTrade') and ticker.lastRTHTrade else None
                 
-                logger.info(f"Ticker data for {symbol}: last={last_price}, close={ticker.close}, bid={bid_price}, ask={ask_price}, lastRTHTrade={last_rth_trade}")
-                
                 # If no last price is available, check other prices
                 if last_price is None:
                     if bid_price and ask_price:
                         # Use midpoint of bid-ask spread
                         last_price = (bid_price + ask_price) / 2
-                        logger.info(f"Using bid-ask midpoint for {symbol}: {last_price}")
                     elif bid_price:
                         last_price = bid_price
-                        logger.info(f"Using bid price for {symbol}: {last_price}")
                     elif ask_price:
                         last_price = ask_price
-                        logger.info(f"Using ask price for {symbol}: {last_price}")
                     elif last_rth_trade:
                         last_price = last_rth_trade
-                        logger.info(f"Using last RTH trade for {symbol}: {last_price}")
                 
                 results[symbol] = last_price
                 
