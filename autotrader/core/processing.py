@@ -9,315 +9,349 @@ from .export import export_to_csv, create_combined_html_report
 import pandas as pd
 import numpy as np
 import webbrowser
+import math
+import traceback
+import jinja2
+from ib_insync import Option
+
+from autotrader.core.utils import get_closest_friday, get_next_monthly_expiration
 
 # Configure logger
 logger = logging.getLogger('autotrader.processing')
 
-def process_stock(ib_connection, ticker, expiration_date, interval, num_strikes, stock_price=None, portfolio=None):
+def format_currency(value):
+    """Format a value as currency"""
+    if value is None or math.isnan(value):
+        return "$0.00"
+    return f"${value:.2f}"
+
+def format_percentage(value):
+    """Format a value as percentage"""
+    if value is None or math.isnan(value):
+        return "0.00%"
+    return f"{value*100:.2f}%"
+
+class SimpleOptionsStrategy:
     """
-    Process a single stock to get option prices
-    
-    Args:
-        ib_connection: IBConnection instance
-        ticker: Stock ticker symbol
-        expiration_date: Option expiration date in YYYYMMDD format
-        interval: Strike price interval
-        num_strikes: Number of strikes to fetch on each side of current price
-        stock_price: Current stock price (if None, it will be fetched)
-        portfolio: Portfolio data (if provided, used for position-aware recommendations)
-        
-    Returns:
-        dict: Dictionary with stock data including current price and option chains
+    Class to implement simple options strategies based on real market data
     """
-    logger = logging.getLogger(__name__)
     
-    # Get current stock price if not provided
-    if stock_price is None:
-        stock_price = ib_connection.get_stock_price(ticker)
+    def __init__(self, ib_connection, config):
+        """
+        Initialize the options strategy engine
         
-    if stock_price is None or pd.isna(stock_price):
-        # If we have portfolio data, check if we have a market price there
-        if portfolio and ticker in portfolio.get('positions', {}):
-            stock_price = portfolio['positions'][ticker].get('market_price')
-            if stock_price is not None and not pd.isna(stock_price):
-                pass  # Using market price from portfolio
+        Args:
+            ib_connection: IBConnection instance
+            config: Configuration dictionary
+        """
+        self.ib_connection = ib_connection
+        self.config = config
         
-        # If still no price, use mock data
-        if stock_price is None or pd.isna(stock_price):
-            mock_prices = {
-                'AAPL': 150.0,
-                'TSLA': 220.0,
-                'NVDA': 100.0,
-                'MSFT': 380.0,
-                'AMZN': 190.0,
-                'GOOG': 165.0
-            }
-            stock_price = mock_prices.get(ticker, 100.0)
-            logger.warning(f"Could not get real price for {ticker}, using mock price: ${stock_price:.2f}")
-    
-    # Calculate recommended strike prices (20% below and 20% above)
-    put_strike = int(stock_price * 0.8 / interval) * interval
-    call_strike = int(stock_price * 1.2 / interval) * interval
-    
-    # Check portfolio positions if provided
-    position_data = None
-    if portfolio and portfolio.get('positions') and ticker in portfolio.get('positions', {}):
-        position_data = portfolio['positions'][ticker]
-        position_shares = position_data.get('shares', 0)
+    def _adjust_to_standard_strike(self, strike):
+        """
+        Adjust a strike price to a standard option strike increment
         
-        # Fix any NaN values in position data
-        if pd.isna(position_data.get('avg_cost')):
-            position_data['avg_cost'] = stock_price * 0.9  # Mock average cost as 90% of current price
+        Args:
+            strike: Strike price
             
-        if pd.isna(position_data.get('market_value')):
-            position_data['market_value'] = position_shares * stock_price
+        Returns:
+            float: Adjusted strike price
+        """
+        if strike <= 5:
+            # $0.50 increments for stocks under $5
+            return round(strike * 2) / 2
+        elif strike <= 25:
+            # $1.00 increments for stocks under $25
+            return round(strike)
+        elif strike <= 200:
+            # $5.00 increments for stocks under $200
+            return round(strike / 5) * 5
+        else:
+            # $10.00 increments for stocks over $200
+            return round(strike / 10) * 10
+    
+    def process_stock(self, ticker, portfolio=None):
+        """
+        Process a stock to find option trade recommendations
+        
+        Args:
+            ticker (str): Stock ticker symbol
+            portfolio (dict, optional): Portfolio data from IB. Defaults to None.
             
-        if pd.isna(position_data.get('unrealized_pnl')):
-            position_data['unrealized_pnl'] = position_data['market_value'] - (position_data['avg_cost'] * position_shares)
-    
-    # Determine if we should recommend covered calls for existing positions
-    call_action = "BUY"
-    put_action = "SELL"
-    estimated_earnings = {
-        'call': None,
-        'put': None
-    }
-    
-    # Get option prices
-    options_data = {}
-    
-    # Get put option data
-    put_contract = ib_connection.create_option_contract(ticker, expiration_date, put_strike, 'P')
-    put_data = ib_connection.get_option_price(put_contract)
-    if put_data is None or (put_data.get('bid') is None and put_data.get('ask') is None):
-        # Create realistic mock option data for puts
-        # Out-of-the-money puts typically have bid prices around 0.5-2% of stock price
-        # depending on how far out they are and expiration
-        itm_factor = max(0, stock_price - put_strike) / stock_price  # in-the-money factor
-        days_to_exp = 30  # Assume 30 days to expiration
-        volatility_factor = {
-            'AAPL': 0.25,  # Lower volatility for stable stocks
-            'MSFT': 0.25,
-            'GOOG': 0.25,
-            'TSLA': 0.50,  # Higher volatility stocks
-            'NVDA': 0.40,
-            'AMZN': 0.30
-        }.get(ticker, 0.30)
-        
-        # Calculate theoretical price using a simplified model
-        time_factor = days_to_exp / 365
-        intrinsic = max(0, put_strike - stock_price)
-        extrinsic = stock_price * volatility_factor * time_factor * 0.4
-        theoretical_price = intrinsic + extrinsic
-        
-        # Set bid/ask with a reasonable spread
-        put_bid = max(0.01, theoretical_price * 0.95)
-        put_ask = put_bid * 1.10  # 10% spread
-        
-        # Round to reasonable option prices
-        put_bid = round(put_bid * 100) / 100
-        put_ask = round(put_ask * 100) / 100
-        
-        put_data = {'bid': put_bid, 'ask': put_ask, 'last': (put_bid + put_ask) / 2}
-        
-    options_data[f"{put_strike}_P"] = put_data
-        
-    # Get call option data
-    call_contract = ib_connection.create_option_contract(ticker, expiration_date, call_strike, 'C')
-    call_data = ib_connection.get_option_price(call_contract)
-    if call_data is None or (call_data.get('bid') is None and call_data.get('ask') is None):
-        # Create realistic mock option data for calls
-        # Out-of-the-money calls typically have bid prices around 0.5-2% of stock price
-        # depending on how far out they are and expiration
-        itm_factor = max(0, call_strike - stock_price) / stock_price  # in-the-money factor
-        days_to_exp = 30  # Assume 30 days to expiration
-        volatility_factor = {
-            'AAPL': 0.25,  # Lower volatility for stable stocks
-            'MSFT': 0.25,
-            'GOOG': 0.25,
-            'TSLA': 0.50,  # Higher volatility stocks
-            'NVDA': 0.40,
-            'AMZN': 0.30
-        }.get(ticker, 0.30)
-        
-        # Calculate theoretical price using a simplified model
-        time_factor = days_to_exp / 365
-        intrinsic = max(0, stock_price - call_strike)
-        extrinsic = stock_price * volatility_factor * time_factor * 0.4
-        theoretical_price = intrinsic + extrinsic
-        
-        # Set bid/ask with a reasonable spread
-        call_bid = max(0.01, theoretical_price * 0.95)
-        call_ask = call_bid * 1.10  # 10% spread
-        
-        # Round to reasonable option prices
-        call_bid = round(call_bid * 100) / 100
-        call_ask = round(call_ask * 100) / 100
-        
-        call_data = {'bid': call_bid, 'ask': call_ask, 'last': (call_bid + call_ask) / 2}
-        
-    options_data[f"{call_strike}_C"] = call_data
-    
-    # Calculate potential earnings if portfolio data is available
-    if position_data and position_data.get('shares', 0) > 0:
-        # We have shares, so recommend selling covered calls
-        call_action = "SELL"
-        
-        # Calculate covered call profit potential
-        if call_data and call_data.get('bid'):
-            position_shares = position_data.get('shares', 0)
-            num_contracts = int(position_shares / 100)  # Each contract is for 100 shares
-            if num_contracts == 0 and position_shares > 0:
-                num_contracts = 1  # Ensure at least one contract if we have shares
+        Returns:
+            dict: Dictionary with stock and option data and recommendations
+        """
+        try:
+            # Get the stock price
+            stock_price = self.ib_connection.get_stock_price(ticker)
+            
+            if stock_price is None or math.isnan(stock_price):
+                logger.error(f"Could not get price for {ticker}, skipping")
+                return None
                 
-            premium_per_contract = call_data.get('bid', 0)
-            total_premium = premium_per_contract * num_contracts * 100  # Premium for all contracts
+            # Check if we have a position in this stock from the portfolio
+            stock_position = None
+            if portfolio and 'positions' in portfolio:
+                try:
+                    for position in portfolio['positions']:
+                        if isinstance(position, dict) and 'contract' in position and hasattr(position['contract'], 'symbol'):
+                            if position['contract'].symbol == ticker and position['contract'].secType == 'STK':
+                                stock_position = position
+                                break
+                        elif isinstance(position, str) and position == ticker:
+                            # Legacy format where positions is a list of ticker strings
+                            logger.debug(f"Found position for {ticker} in legacy format")
+                            # Create mock position data
+                            stock_position = {
+                                'position': 100,  # Assume 100 shares
+                                'avgCost': stock_price * 0.9,  # Assume 10% below current price
+                                'marketValue': stock_price * 100,  # Current market value
+                                'unrealizedPNL': stock_price * 100 - (stock_price * 0.9 * 100)  # Simple P&L calculation
+                            }
+                            break
+                except Exception as e:
+                    logger.warning(f"Error checking portfolio positions: {e}")
+                    stock_position = None
             
-            market_value = position_data.get('market_value', position_shares * stock_price)
-            if market_value == 0:
-                market_value = position_shares * stock_price
+            # Determine strategy based on position
+            strategy = "NEUTRAL"  # Default strategy
+            position_size = 0
+            avg_cost = 0
+            market_value = 0
+            unrealized_pnl = 0
+            
+            if stock_position:
+                position_size = stock_position['position']
+                avg_cost = stock_position['avgCost'] if 'avgCost' in stock_position else 0
+                market_value = stock_position['marketValue'] if 'marketValue' in stock_position else 0
+                unrealized_pnl = stock_position['unrealizedPNL'] if 'unrealizedPNL' in stock_position else 0
                 
-            premium_percent = (total_premium / market_value) * 100 if market_value else 0
+                # Decide strategy based on position
+                if position_size > 0:
+                    strategy = "BULLISH"  # We own the stock, sell calls
+                elif position_size < 0:
+                    strategy = "BEARISH"  # We are short the stock, sell puts
             
-            estimated_earnings['call'] = {
-                'strategy': 'Covered Call',
-                'contracts': num_contracts,
-                'premium_per_contract': premium_per_contract,
-                'total_premium': total_premium,
-                'premium_percent': premium_percent
+            # Calculate option strike prices at specified percentages
+            put_otm_pct = self.config.get('put_otm_percentage', 20)
+            call_otm_pct = self.config.get('call_otm_percentage', 20)
+            
+            put_strike = round(stock_price * (1 - put_otm_pct/100))
+            call_strike = round(stock_price * (1 + call_otm_pct/100))
+            
+            # Adjust to standard option strike increments
+            put_strike = self._adjust_to_standard_strike(put_strike)
+            call_strike = self._adjust_to_standard_strike(call_strike)
+            
+            # Get the expiration date for options (closest Friday by default)
+            if self.config.get('use_monthly_options', False):
+                expiration = get_next_monthly_expiration()
+            else:
+                expiration = get_closest_friday().strftime('%Y%m%d')
+                
+            # Get option prices
+            put_contract = Option(ticker, expiration, put_strike, 'P')
+            call_contract = Option(ticker, expiration, call_strike, 'C')
+            
+            put_data = self.ib_connection.get_option_price(put_contract)
+            call_data = self.ib_connection.get_option_price(call_contract)
+            
+            # Calculate potential earnings for options
+            put_earnings = None
+            call_earnings = None
+            
+            if put_data and 'bid' in put_data and put_data['bid'] is not None:
+                # For cash-secured puts
+                max_contracts = math.floor(self.config.get('max_position_value', 20000) / (put_strike * 100))
+                premium_per_contract = put_data['bid'] * 100  # Convert to dollar amount
+                total_premium = premium_per_contract * max_contracts
+                return_on_cash = (total_premium / (put_strike * 100 * max_contracts)) * 100 if max_contracts > 0 else 0
+                
+                put_earnings = {
+                    'strategy': 'Cash-Secured Put',
+                    'max_contracts': max_contracts,
+                    'premium_per_contract': premium_per_contract,
+                    'total_premium': total_premium,
+                    'return_on_cash': return_on_cash
+                }
+            
+            if call_data and 'bid' in call_data and call_data['bid'] is not None and position_size > 0:
+                # For covered calls (only if we own the stock)
+                max_contracts = math.floor(abs(position_size) / 100)  # Each contract covers 100 shares
+                premium_per_contract = call_data['bid'] * 100  # Convert to dollar amount
+                total_premium = premium_per_contract * max_contracts
+                return_on_capital = (total_premium / (stock_price * 100 * max_contracts)) * 100 if max_contracts > 0 else 0
+                
+                call_earnings = {
+                    'strategy': 'Covered Call',
+                    'max_contracts': max_contracts,
+                    'premium_per_contract': premium_per_contract,
+                    'total_premium': total_premium,
+                    'return_on_capital': return_on_capital
+                }
+            
+            # Create recommendation based on portfolio position
+            recommendation = {}
+            
+            if strategy == "BULLISH" and position_size > 0:
+                # We own the stock, recommend selling calls
+                recommendation = {
+                    'action': 'SELL',
+                    'type': 'CALL',
+                    'strike': call_strike,
+                    'expiration': expiration,
+                    'earnings': call_earnings
+                }
+            elif strategy == "BEARISH" and position_size < 0:
+                # We are short the stock, recommend selling puts
+                recommendation = {
+                    'action': 'SELL',
+                    'type': 'PUT',
+                    'strike': put_strike,
+                    'expiration': expiration,
+                    'earnings': put_earnings
+                }
+            else:
+                # Neutral strategy or no position
+                # For simplicity, recommend selling puts as it requires less capital than buying stock
+                recommendation = {
+                    'action': 'SELL',
+                    'type': 'PUT',
+                    'strike': put_strike,
+                    'expiration': expiration,
+                    'earnings': put_earnings
+                }
+                
+                # Also include call option as a bullish alternative
+                recommendation['alternative'] = {
+                    'action': 'BUY',
+                    'type': 'CALL',
+                    'strike': call_strike,
+                    'expiration': expiration
+                }
+            
+            # Build and return the result
+            result = {
+                'ticker': ticker,
+                'price': stock_price,
+                'strategy': strategy,
+                'position': {
+                    'size': position_size,
+                    'avg_cost': avg_cost,
+                    'market_value': market_value,
+                    'unrealized_pnl': unrealized_pnl
+                },
+                'options': {
+                    'expiration': expiration,
+                    'put': {
+                        'strike': put_strike,
+                        'bid': put_data['bid'] if put_data and 'bid' in put_data else None,
+                        'ask': put_data['ask'] if put_data and 'ask' in put_data else None,
+                        'last': put_data['last'] if put_data and 'last' in put_data else None
+                    },
+                    'call': {
+                        'strike': call_strike,
+                        'bid': call_data['bid'] if call_data and 'bid' in call_data else None,
+                        'ask': call_data['ask'] if call_data and 'ask' in call_data else None,
+                        'last': call_data['last'] if call_data and 'last' in call_data else None
+                    }
+                },
+                'recommendation': recommendation
             }
-    
-    # Calculate potential earnings for cash-secured puts
-    if portfolio and put_data and put_data.get('bid'):
-        available_cash = portfolio.get('available_cash', 0)
-        if available_cash == 0:
-            available_cash = 100000  # Mock available cash if not available
             
-        cash_needed_per_contract = put_strike * 100  # Cash needed to secure one put contract
+            return result
+        except Exception as e:
+            logger.error(f"Error processing {ticker}: {str(e)}")
+            logger.error(traceback.format_exc())
+            return None
+            
+    def generate_html_report(self, results, output_file):
+        """
+        Generate an HTML report for the processed stocks
         
-        if cash_needed_per_contract > 0 and available_cash > 0:
-            max_contracts = max(1, int(available_cash / cash_needed_per_contract))
-            premium_per_contract = put_data.get('bid', 0)
-            total_premium = premium_per_contract * max_contracts * 100  # Premium for all contracts
+        Args:
+            results (list): List of stock data dictionaries
+            output_file (str): Output file path
             
-            premium_percent = (total_premium / available_cash) * 100 if available_cash else 0
+        Returns:
+            str: Path to the generated report
+        """
+        try:
+            # Get the template directory
+            template_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'templates')
             
-            estimated_earnings['put'] = {
-                'strategy': 'Cash-Secured Put',
-                'contracts': max_contracts,
-                'premium_per_contract': premium_per_contract,
-                'total_premium': total_premium,
-                'premium_percent': premium_percent
-            }
-    
-    # Return stock data
-    return {
-        'ticker': ticker,
-        'price': stock_price,
-        'options': options_data,
-        'position': position_data,
-        'recommendation': {
-            'put': {
-                'strike': put_strike,
-                'action': put_action,
-                'percent': -20
-            },
-            'call': {
-                'strike': call_strike,
-                'action': call_action,
-                'percent': 20
-            }
-        },
-        'estimated_earnings': estimated_earnings
-    }
+            # Create Jinja2 environment
+            env = jinja2.Environment(
+                loader=jinja2.FileSystemLoader(template_dir),
+                autoescape=jinja2.select_autoescape(['html', 'xml'])
+            )
+            
+            # Add custom filters
+            env.filters['format_currency'] = format_currency
+            env.filters['format_percentage'] = format_percentage
+            
+            # Get the template
+            template = env.get_template('options_report.html')
+            
+            # Render the template
+            html = template.render(
+                stocks=results,
+                generation_time=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                expiration_date=results[0]['options']['expiration'] if results else ''
+            )
+            
+            # Write the HTML to file
+            with open(output_file, 'w') as f:
+                f.write(html)
+            
+            return output_file
+        except Exception as e:
+            logger.error(f"Error generating HTML report: {str(e)}")
+            logger.error(traceback.format_exc())
+            return None
 
 def print_stock_summary(stock_data):
     """
-    Print a summary of stock options data to the console
+    Print a summary of stock data to the console
     
     Args:
         stock_data (dict): Stock data dictionary
     """
-    if not stock_data:
-        print("No data available")
-        return
-        
-    ticker = stock_data['ticker']
-    price = stock_data['price']
-    options = stock_data.get('options', {})
-    recommendation = stock_data.get('recommendation', {})
-    position = stock_data.get('position')
-    estimated_earnings = stock_data.get('estimated_earnings', {})
+    print(f"\n=== {stock_data['ticker']} ===")
+    print(f"Current Price: ${stock_data['price']:.2f}")
     
-    # Print header
-    print(f"\n=== {ticker} OPTIONS SUMMARY ===")
-    print(f"{ticker} Price: ${price:.2f}")
+    # Print position info if available
+    if stock_data.get('position') and stock_data['position'].get('size') != 0:
+        position = stock_data['position']
+        print(f"Position: {position['size']} shares @ ${position.get('avg_cost', 0):.2f}")
+        print(f"Market Value: ${position.get('market_value', 0):.2f}")
+        print(f"Unrealized P&L: ${position.get('unrealized_pnl', 0):.2f}")
     
-    # Print position information if available
-    if position:
-        print(f"\nCURRENT POSITION:")
-        print(f"Shares: {position['shares']:.0f}")
-        print(f"Average Cost: ${position['avg_cost']:.2f}")
-        print(f"Market Value: ${position['market_value']:.2f}")
-        print(f"Unrealized P&L: ${position['unrealized_pnl']:.2f}")
-    
-    # Print recommendations
-    print("\nRECOMMENDED STRATEGY:")
-    
-    # Put recommendations
-    put_rec = recommendation.get('put', {})
-    if put_rec:
-        put_strike = put_rec.get('strike')
-        put_action = put_rec.get('action')
-        put_key = f"{put_strike}_P"
-        put_data = options.get(put_key, {})
+    # Print option recommendations
+    if 'recommendation' in stock_data:
+        rec = stock_data['recommendation']
+        print("\nRecommendation:")
         
-        print(f"{put_action} PUT  @ Strike ${put_strike:.2f} ({put_rec.get('percent')}%)")
-        print(f"  Bid: {format_option_price(put_data.get('bid'))}, Ask: {format_option_price(put_data.get('ask'))}, Last: {format_option_price(put_data.get('last'))}")
+        if rec.get('type') == 'PUT':
+            option_data = stock_data['options']['put']
+            print(f"{rec.get('action', 'SELL')} PUT @ ${rec.get('strike', 0):.2f} " +
+                  f"({(rec.get('strike', 0)/stock_data['price'] - 1)*100:.1f}%)")
+        else:
+            option_data = stock_data['options']['call']
+            print(f"{rec.get('action', 'BUY')} CALL @ ${rec.get('strike', 0):.2f} " +
+                  f"({(rec.get('strike', 0)/stock_data['price'] - 1)*100:.1f}%)")
         
-        # Print estimated earnings for puts if available
-        put_earnings = estimated_earnings.get('put')
-        if put_earnings:
-            print(f"  Potential Earnings ({put_earnings['strategy']}):")
-            print(f"  Max Contracts: {put_earnings['contracts']}")
-            print(f"  Premium per Contract: ${put_earnings['premium_per_contract']:.2f}")
-            print(f"  Total Premium: ${put_earnings['total_premium']:.2f}")
-            print(f"  Return on Cash: {put_earnings['premium_percent']:.2f}%")
-    
-    # Call recommendations
-    call_rec = recommendation.get('call', {})
-    if call_rec:
-        call_strike = call_rec.get('strike')
-        call_action = call_rec.get('action')
-        call_key = f"{call_strike}_C"
-        call_data = options.get(call_key, {})
+        print(f"Bid: ${option_data.get('bid', 0):.2f}, Ask: ${option_data.get('ask', 0):.2f}")
         
-        print(f"{call_action} CALL  @ Strike ${call_strike:.2f} ({call_rec.get('percent')}%)")
-        print(f"  Bid: {format_option_price(call_data.get('bid'))}, Ask: {format_option_price(call_data.get('ask'))}, Last: {format_option_price(call_data.get('last'))}")
-        
-        # Print estimated earnings for calls if available
-        call_earnings = estimated_earnings.get('call')
-        if call_earnings:
-            print(f"  Potential Earnings ({call_earnings['strategy']}):")
-            print(f"  Contracts: {call_earnings['contracts']}")
-            print(f"  Premium per Contract: ${call_earnings['premium_per_contract']:.2f}")
-            print(f"  Total Premium: ${call_earnings['total_premium']:.2f}")
-            print(f"  Return on Position: {call_earnings['premium_percent']:.2f}%")
-
-def format_option_price(price):
-    """
-    Format option price for display
-    
-    Args:
-        price: Option price value
-        
-    Returns:
-        str: Formatted price string
-    """
-    if price is None:
-        return "None"
-    else:
-        return f"${price:.2f}"
+        if rec.get('earnings'):
+            earnings = rec['earnings']
+            print(f"\nEstimated Earnings ({earnings.get('strategy', '')}):")
+            print(f"  Contracts: {earnings.get('max_contracts', 0)}")
+            print(f"  Premium: ${earnings.get('total_premium', 0):.2f}")
+            if 'return_on_cash' in earnings:
+                print(f"  Return: {earnings.get('return_on_cash', 0):.2f}%")
+            elif 'return_on_capital' in earnings:
+                print(f"  Return: {earnings.get('return_on_capital', 0):.2f}%")
 
 def export_all_stocks_data(stocks_data, expiration, format='all', output_dir='reports'):
     """
@@ -409,12 +443,12 @@ def open_in_browser(file_path):
     """
     try:
         if not os.path.exists(file_path):
-            logger.error(f"File not found: {file_path}")
             return False
             
-        url = 'file://' + os.path.abspath(file_path)
-        webbrowser.open(url)
+        # Convert to file URL
+        file_url = f"file://{os.path.abspath(file_path)}"
+        webbrowser.open(file_url)
         return True
     except Exception as e:
-        logger.error(f"Error opening file in browser: {e}")
+        logger.error(f"Error opening browser: {str(e)}")
         return False 

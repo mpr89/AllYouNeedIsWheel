@@ -1,132 +1,233 @@
-#!/usr/bin/env python
-"""
-Simple script to read option prices from multiple stocks using Interactive Brokers API.
-"""
-
+#!/usr/bin/env python3
 import os
+import sys
 import argparse
-from datetime import datetime, timedelta
+import time
+import logging
+import datetime
+from pathlib import Path
+import pandas as pd
+import numpy as np
+import traceback
 
-# Import the autotrader core modules
-from autotrader.core import (
-    IBConnection,
-    setup_logging,
-    rotate_logs,
-    rotate_reports,
-    process_stock,
-    print_stock_summary,
-    export_all_stocks_data,
-    create_combined_html_report,
-    open_in_browser,
-    get_next_monthly_expiration
-)
+# Add the root directory to Python path
+root_dir = os.path.dirname(os.path.abspath(__file__))
+if root_dir not in sys.path:
+    sys.path.append(root_dir)
 
-# Set up logging
-logger = setup_logging(logs_dir='logs', log_prefix='trader')
+from autotrader.core.connection import IBConnection, Option
+from autotrader.core.processing import SimpleOptionsStrategy, print_stock_summary, format_currency, format_percentage
+from autotrader.core.utils import get_closest_friday, get_next_monthly_expiration, setup_logging, rotate_reports
+from autotrader.config import Config
+
+# Default configuration
+DEFAULT_CONFIG = {
+    'host': '127.0.0.1',
+    'port': 7497,
+    'client_id': 1,
+    'readonly': True,
+    'default_interval': 15,
+    'default_strikes': 10,
+    'log_level': 'INFO',
+    'report_dir': 'reports',
+}
 
 def main():
-    """
-    Main function to get options prices for multiple stocks
-    """
-    # Setup argument parser
-    parser = argparse.ArgumentParser(description="Run the stock option trader.")
-    parser.add_argument("--tickers", help="Comma-separated list of stock tickers to process", default="NVDA,TSLA,AAPL")
-    parser.add_argument("--interval", type=float, help="Strike price interval", default=5.0)
-    parser.add_argument("--num_strikes", type=int, help="Number of strikes to fetch around current price", default=5)
-    parser.add_argument("--days", type=int, help="Days to expiration (defaults to closest Friday)", default=None)
-    parser.add_argument("--ib_host", help="IB TWS/Gateway host", default="127.0.0.1")
-    parser.add_argument("--ib_port", type=int, help="IB TWS/Gateway port", default=7497)
-    parser.add_argument("--output_dir", help="Directory to save output files", default="reports")
-    parser.add_argument("--no_browser", action="store_true", help="Disable automatic opening of report in browser")
-    
+    parser = argparse.ArgumentParser(description='AutoTrader - Automated Options Trading Helper')
+    parser.add_argument('--config', type=str, help='Path to configuration file')
+    parser.add_argument('--tickers', type=str, help='Comma-separated stock tickers to analyze')
+    parser.add_argument('--interval', type=int, help='Strike price interval')
+    parser.add_argument('--monthly', action='store_true', help='Use monthly options expiration')
+    parser.add_argument('--strikes', type=int, help='Number of strikes to analyze on each side')
     args = parser.parse_args()
     
-    # Split tickers
-    tickers = [t.strip() for t in args.tickers.split(',')]
+    # Load configuration
+    config = Config(DEFAULT_CONFIG, args.config)
     
-    # Create IB connection
-    ib = IBConnection(host=args.ib_host, port=args.ib_port, readonly=True)
+    # Setup logging
+    logs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+    log_file = setup_logging(logs_dir, config.get('log_level', 'INFO'))
+    logger = logging.getLogger('autotrader')
     
+    # Make sure required directories exist
+    reports_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), config.get('report_dir', 'reports'))
+    os.makedirs(reports_dir, exist_ok=True)
+    
+    # Clean up old reports
+    rotate_reports(reports_dir, max_reports=5)
+    
+    # Get tickers to analyze
+    tickers = []
+    if args.tickers:
+        tickers = [t.strip().upper() for t in args.tickers.split(',')]
+    else:
+        logger.error("No tickers specified. Use --tickers=SYMBOL1,SYMBOL2")
+        return 1
+        
+    # Determine expiration date
+    use_monthly = args.monthly or config.get('use_monthly_options', False)
+    if use_monthly:
+        expiration_date = get_next_monthly_expiration()
+    else:
+        expiration_date = get_closest_friday().strftime('%Y%m%d')
+        
+    # Get interval and number of strikes
+    interval = args.interval or config.get('default_interval', 5)
+    num_strikes = args.strikes or config.get('default_strikes', 10)
+    
+    # Initialize connection to IB
     try:
-        # Connect to IB
-        if not ib.connect():
-            logger.error("Failed to connect to IB")
-            return
+        ib_connection = IBConnection(
+            host=config.get('host', '127.0.0.1'),
+            port=config.get('port', 7497),
+            client_id=config.get('client_id', 1),
+            readonly=config.get('readonly', True)
+        )
         
-        # Get current date and target expiration date
-        today = datetime.now().date()
+        logger.debug(f"Connecting to IB at {config.get('host')}:{config.get('port')}")
+        connected = ib_connection.connect()
         
-        # Determine expiration date
-        if args.days:
-            # Use specified days to expiration
-            expiration_date = (today + timedelta(days=args.days)).strftime('%Y%m%d')
+        if not connected:
+            logger.error("Failed to connect to Interactive Brokers. Check connection settings.")
+            return 1
+            
+        # Initialize options strategy engine
+        strategy = SimpleOptionsStrategy(ib_connection, config.to_dict())
+        
+        # Get portfolio data for position-aware recommendations
+        portfolio = ib_connection.get_portfolio()
+        if portfolio:
+            logger.debug(f"Retrieved portfolio with {len(portfolio.get('positions', []))} positions")
+            
+            # Display portfolio summary
+            print("\n=== PORTFOLIO SUMMARY ===")
+            print(f"Account: {portfolio.get('account_id', 'Unknown')}")
+            print(f"Available Cash: {format_currency(portfolio.get('available_cash', 0))}")
+            print(f"Net Liquidation Value: {format_currency(portfolio.get('net_liquidation_value', 0))}")
+            
+            if portfolio.get('positions'):
+                print("\nPositions:")
+                try:
+                    for position in portfolio.get('positions', []):
+                        if isinstance(position, dict) and 'contract' in position and hasattr(position['contract'], 'symbol'):
+                            ticker = position['contract'].symbol
+                            secType = position['contract'].secType
+                            
+                            if secType == 'STK':
+                                shares = position['position']
+                                avg_cost = position.get('avgCost', 0)
+                                market_value = position.get('marketValue', 0)
+                                pnl = position.get('unrealizedPNL', 0)
+                                
+                                print(f"  {ticker}: {shares} shares @ {format_currency(avg_cost)}/share, " + 
+                                      f"Value: {format_currency(market_value)}, " + 
+                                      f"P&L: {format_currency(pnl)} ({format_percentage(pnl/market_value) if market_value else 'N/A'})")
+                        else:
+                            logger.warning(f"Unexpected position format: {position}")
+                except Exception as e:
+                    logger.error(f"Error: {str(e)}")
+                    logger.error(traceback.format_exc())
+            print()
         else:
-            # Use the closest monthly expiration date
-            expiration_date = get_next_monthly_expiration()
+            logger.warning("Could not retrieve portfolio data. Proceeding with market analysis only.")
             
-        logger.info(f"Using expiration date: {expiration_date}")
-        
-        # Fetch portfolio data
-        portfolio = ib.get_portfolio()
-        if portfolio is None:
-            logger.warning("Could not retrieve portfolio data")
-            portfolio = {
-                'account_value': 0,
-                'available_cash': 0,
-                'positions': {}
-            }
-            
-        # Get stock prices for all tickers at once
-        stock_prices = ib.get_multiple_stock_prices(tickers)
-        
-        # Process each stock
-        all_stocks_data = []
+        # Process each ticker
+        all_results = []
         for ticker in tickers:
-            if ticker not in stock_prices or stock_prices[ticker] is None:
-                logger.warning(f"Could not get price for {ticker}, skipping")
-                continue
+            logger.debug(f"Processing {ticker} with expiration {expiration_date}")
+            
+            # Process the stock with our strategy engine
+            result = strategy.process_stock(ticker, portfolio)
+            
+            if result:
+                all_results.append(result)
                 
-            stock_data = process_stock(
-                ib, 
-                ticker, 
-                expiration_date, 
-                args.interval, 
-                args.num_strikes, 
-                stock_prices[ticker],
-                portfolio
-            )
-            
-            if stock_data:
-                all_stocks_data.append(stock_data)
-                print_stock_summary(stock_data)
+                # Print summary to console
+                print(f"\n=== {ticker} OPTIONS SUMMARY ===")
+                print(f"{ticker} Price: ${result['price']:.2f}")
+                
+                # Print position details if available
+                if result['position']['size'] != 0:
+                    print("\nCURRENT POSITION:")
+                    print(f"  Shares: {result['position']['size']}")
+                    print(f"  Average Cost: ${result['position']['avg_cost']:.2f}")
+                    print(f"  Market Value: ${result['position']['market_value']:.2f}")
+                    print(f"  Unrealized P&L: ${result['position']['unrealized_pnl']:.2f}")
+                
+                # Print recommendation
+                print("\nRECOMMENDED STRATEGY:")
+                rec = result['recommendation']
+                option_type = rec['type']
+                strike = rec['strike']
+                expiration = rec['expiration']
+                action = rec['action']
+                
+                option_data = result['options']['put'] if option_type == 'PUT' else result['options']['call']
+                
+                print(f"{action} {option_type}  @ Strike ${strike:.2f} " + 
+                      (f"({(strike/result['price'] - 1)*100:.0f}%)" if option_type == 'CALL' else f"({(strike/result['price'] - 1)*100:.0f}%)"))
+                
+                # Handle None values in option data
+                bid = option_data.get('bid', 0) or 0
+                ask = option_data.get('ask', 0) or 0
+                last = option_data.get('last', 0) or 0
+                print(f"  Bid: ${bid:.2f}, Ask: ${ask:.2f}, Last: ${last:.2f}")
+                
+                # Print earnings estimate if available
+                if rec.get('earnings'):
+                    earnings = rec['earnings']
+                    print(f"  Potential Earnings ({earnings['strategy']}):")
+                    print(f"  Max Contracts: {earnings['max_contracts']}")
+                    print(f"  Premium per Contract: ${earnings['premium_per_contract']:.2f}")
+                    print(f"  Total Premium: ${earnings['total_premium']:.2f}")
+                    
+                    if 'return_on_cash' in earnings:
+                        print(f"  Return on Cash: {earnings['return_on_cash']:.2f}%")
+                    elif 'return_on_capital' in earnings:
+                        print(f"  Return on Capital: {earnings['return_on_capital']:.2f}%")
+                
+                # Print alternative strategy if available
+                if 'alternative' in rec:
+                    alt = rec['alternative']
+                    alt_type = alt['type']
+                    alt_strike = alt['strike']
+                    alt_action = alt['action']
+                    
+                    alt_option_data = result['options']['put'] if alt_type == 'PUT' else result['options']['call']
+                    
+                    print(f"{alt_action} {alt_type}  @ Strike ${alt_strike:.2f} " + 
+                          (f"({(alt_strike/result['price'] - 1)*100:.0f}%)" if alt_type == 'CALL' else f"({(alt_strike/result['price'] - 1)*100:.0f}%)"))
+                    
+                    # Handle None values in option data
+                    alt_bid = alt_option_data.get('bid', 0) or 0
+                    alt_ask = alt_option_data.get('ask', 0) or 0
+                    alt_last = alt_option_data.get('last', 0) or 0
+                    print(f"  Bid: ${alt_bid:.2f}, Ask: ${alt_ask:.2f}, Last: ${alt_last:.2f}")
+            else:
+                logger.error(f"Failed to process {ticker}")
         
-        # Export data if we have results
-        if all_stocks_data:
-            # Create output directory if it doesn't exist
-            os.makedirs(args.output_dir, exist_ok=True)
+        # Generate HTML report
+        if all_results:
+            report_file = os.path.join(reports_dir, f"options_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.html")
+            strategy.generate_html_report(all_results, report_file)
+            logger.debug(f"Report generated: {report_file}")
             
-            # Rotate reports to keep only the most recent ones
-            rotate_reports(reports_dir=args.output_dir, max_reports=5)
+            # Clean up old reports
+            old_reports = sorted(Path(reports_dir).glob("options_report_*.html"))
+            if len(old_reports) > 5:  # Keep only the 5 most recent reports
+                for old_report in old_reports[:-5]:
+                    logger.debug(f"Deleted old report file: {old_report}")
+                    old_report.unlink()
             
-            # Create a consolidated HTML report
-            report_path = create_combined_html_report(
-                all_stocks_data,
-                expiration_date,
-                output_dir=args.output_dir
-            )
-            
-            logger.info(f"Exported consolidated HTML report: {report_path}")
-            
-            # Open the report in a browser if not disabled
-            if not args.no_browser:
-                open_in_browser(report_path)
     except Exception as e:
-        logger.error(f"Error: {e}")
-        import traceback
+        logger.error(f"Error: {str(e)}")
         logger.error(traceback.format_exc())
+        return 1
     finally:
-        # Disconnect from IB
-        ib.disconnect()
+        if 'ib_connection' in locals() and ib_connection.is_connected():
+            ib_connection.disconnect()
+            
+    return 0
 
 if __name__ == "__main__":
-    main() 
+    sys.exit(main()) 

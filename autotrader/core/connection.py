@@ -341,6 +341,7 @@ class IBConnection:
             # Qualify the contract first
             qualified_contracts = self.ib.qualifyContracts(contract)
             if not qualified_contracts:
+                logger.error(f"Could not qualify contract: {contract.symbol} {contract.lastTradeDateOrContractMonth} {contract.strike} {contract.right}")
                 return None
             
             qualified_contract = qualified_contracts[0]
@@ -348,13 +349,32 @@ class IBConnection:
             # Request market data
             ticker = self.ib.reqMktData(qualified_contract)
             
-            # Wait for market data to arrive
-            self.ib.sleep(3)
+            # Wait for market data to arrive (up to 5 seconds)
+            max_wait = 5  # seconds
+            logger.debug(f"Waiting up to {max_wait} seconds for option market data...")
+            
+            for i in range(max_wait):
+                self.ib.sleep(1)
+                # Log data for debugging purposes
+                logger.debug(f"Option data wait ({i+1}/{max_wait}): "
+                             f"bid={ticker.bid if hasattr(ticker, 'bid') else None}, "
+                             f"ask={ticker.ask if hasattr(ticker, 'ask') else None}, "
+                             f"last={ticker.last if hasattr(ticker, 'last') else None}")
+                
+                # Check if we have received any meaningful data
+                if (hasattr(ticker, 'bid') and ticker.bid is not None and ticker.bid > 0) or \
+                   (hasattr(ticker, 'ask') and ticker.ask is not None and ticker.ask > 0) or \
+                   (hasattr(ticker, 'last') and ticker.last is not None and ticker.last > 0):
+                    break
             
             # Get price data
             bid = ticker.bid if hasattr(ticker, 'bid') and ticker.bid is not None and ticker.bid > 0 else None
             ask = ticker.ask if hasattr(ticker, 'ask') and ticker.ask is not None and ticker.ask > 0 else None
             last = ticker.last if hasattr(ticker, 'last') and ticker.last is not None and ticker.last > 0 else None
+            
+            # Log a warning if we didn't get any price data
+            if bid is None and ask is None and last is None:
+                logger.warning(f"No price data available for {contract.symbol} {contract.right} {contract.strike} {contract.lastTradeDateOrContractMonth}")
             
             # Cancel market data subscription
             self.ib.cancelMktData(qualified_contract)
@@ -605,54 +625,6 @@ class IBConnection:
                 return None
         
         try:
-            # If in readonly mode, return mock data for demo purposes
-            if self.readonly:
-                logger.info("Using mock portfolio data (readonly mode)")
-                # Create mock positions for common stocks
-                mock_positions = {}
-                mock_stocks = {
-                    'AAPL': {'price': 150.0, 'shares': 100},
-                    'TSLA': {'price': 220.0, 'shares': 50},
-                    'NVDA': {'price': 100.0, 'shares': 200},
-                    'MSFT': {'price': 380.0, 'shares': 75},
-                    'AMZN': {'price': 190.0, 'shares': 60},
-                    'GOOG': {'price': 165.0, 'shares': 40}
-                }
-                
-                # Get stock prices for positions that exist
-                for symbol, data in mock_stocks.items():
-                    # Try to get current price if available
-                    current_price = None
-                    try:
-                        # First try to get live price
-                        current_price = self.get_stock_price(symbol)
-                    except:
-                        pass
-                        
-                    # If we couldn't get a live price, use the mock price
-                    if current_price is None:
-                        current_price = data['price']
-                        
-                    shares = data['shares']
-                    avg_cost = current_price * 0.9  # Mock average cost below current price
-                    market_value = current_price * shares
-                    unrealized_pnl = market_value - (avg_cost * shares)
-                    
-                    mock_positions[symbol] = {
-                        'shares': shares,
-                        'avg_cost': avg_cost,
-                        'market_price': current_price,
-                        'market_value': market_value,
-                        'unrealized_pnl': unrealized_pnl,
-                        'realized_pnl': 0
-                    }
-                
-                return {
-                    'account_value': 500000.0,
-                    'available_cash': 100000.0,
-                    'positions': mock_positions
-                }
-            
             # Get account summary
             account_id = self.ib.managedAccounts()[0]
             account_values = self.ib.accountSummary(account_id)
