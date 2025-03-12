@@ -817,14 +817,17 @@ class IBConnection:
         
         Returns:
             dict: Dictionary containing account information and positions
+            
+        Raises:
+            ConnectionError: If connection fails during market hours
+            ValueError: If no data available during market hours
         """
         is_market_open = self._is_market_hours()
         
         if not self.is_connected():
             if is_market_open:
-                logger.warning("Not connected to IB during market hours. Attempting to connect...")
-                if not self.connect():
-                    raise ConnectionError("Failed to connect to IB during market hours")
+                logger.error("Not connected to IB during market hours")
+                raise ConnectionError("Not connected to IB during market hours")
             else:
                 logger.info("Market is closed. Using mock portfolio data.")
                 return self._generate_mock_portfolio()
@@ -834,8 +837,12 @@ class IBConnection:
             account_id = self.ib.managedAccounts()[0]
             account_values = self.ib.accountSummary(account_id)
             
-            if not account_values and is_market_open:
-                raise ValueError("No account data available during market hours")
+            if not account_values:
+                if is_market_open:
+                    raise ValueError("No account data available during market hours")
+                else:
+                    logger.info("No account data during closed market. Using mock portfolio data.")
+                    return self._generate_mock_portfolio()
             
             # Extract relevant account information
             account_info = {
@@ -868,17 +875,19 @@ class IBConnection:
                     'contract': position.contract
                 }
             
-            if not positions and is_market_open:
-                raise ValueError("No position data available during market hours")
-            elif not positions:
-                logger.info("No positions found during closed market. Using mock portfolio data.")
-                return self._generate_mock_portfolio()
+            if not positions:
+                if is_market_open:
+                    raise ValueError("No position data available during market hours")
+                else:
+                    logger.info("No positions found during closed market. Using mock portfolio data.")
+                    return self._generate_mock_portfolio()
             
             return {
                 'account_id': account_id,
                 'available_cash': account_info.get('available_cash', 0),
                 'account_value': account_info.get('account_value', 0),
-                'positions': positions
+                'positions': positions,
+                'is_mock': False
             }
         
         except Exception as e:
@@ -1408,14 +1417,17 @@ class IBConnection:
             
         Returns:
             dict: Dictionary with stock data or None if error
+            
+        Raises:
+            ConnectionError: If connection fails during market hours
+            ValueError: If no data available during market hours
         """
         is_market_open = self._is_market_hours()
         
         if not self.is_connected():
             if is_market_open:
-                logger.warning("Not connected to IB during market hours. Attempting to connect...")
-                if not self.connect():
-                    raise ConnectionError("Failed to connect to IB during market hours")
+                logger.error("Not connected to IB during market hours")
+                raise ConnectionError("Not connected to IB during market hours")
             else:
                 logger.info("Market is closed. Using mock data.")
                 return self._generate_mock_stock_data(symbol)
@@ -1451,8 +1463,8 @@ class IBConnection:
             close_price = ticker_data.close if ticker_data.close else last_price
             
             # During market hours, we want real data only
-            if is_market_open and last_price is None:
-                raise ValueError(f"No real-time price data available for {symbol} during market hours")
+            if is_market_open and (last_price is None or bid_price is None or ask_price is None):
+                raise ValueError(f"Incomplete market data for {symbol} during market hours")
             
             # Build and return the result
             result = {
@@ -1467,7 +1479,8 @@ class IBConnection:
                 'volume': volume,
                 'halted': ticker_data.halted if hasattr(ticker_data, 'halted') else False,
                 'timestamp': ticker_data.date.isoformat() if hasattr(ticker_data, 'date') else datetime.now().isoformat(),
-                'is_historical': False
+                'is_historical': False,
+                'is_mock': False
             }
             
             return result
