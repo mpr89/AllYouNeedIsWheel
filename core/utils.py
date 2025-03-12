@@ -6,6 +6,7 @@ import os
 import glob
 import logging
 from datetime import datetime, timedelta
+import math
 
 # Configure logger
 logger = logging.getLogger('autotrader.utils')
@@ -37,7 +38,6 @@ def rotate_logs(logs_dir='logs', max_logs=5):
         except Exception as e:
             print(f"Error deleting log file {log_file}: {e}")
 
-def rotate_reports(reports_dir='reports', max_reports=5):
     """
     Rotate HTML report files, keeping only the specified number of most recent reports.
     
@@ -216,4 +216,117 @@ def format_date_string(date_obj):
     Returns:
         str: Date string in YYYYMMDD format
     """
-    return date_obj.strftime("%Y%m%d") 
+    return date_obj.strftime("%Y%m%d")
+
+def format_currency(value):
+    """Format a value as currency"""
+    if value is None or isinstance(value, float) and math.isnan(value):
+        return "$0.00"
+    return f"${value:.2f}"
+
+def format_percentage(value):
+    """Format a value as percentage"""
+    if value is None or isinstance(value, float) and math.isnan(value):
+        return "0.00%"
+    return f"{value:.2f}%"
+
+def print_stock_summary(stock_data):
+    """
+    Print a summary of stock data with position and option recommendations
+    
+    Args:
+        stock_data (dict): Stock data including price, position, and options
+    """
+    ticker = stock_data.get('ticker', 'UNKNOWN')
+    price = stock_data.get('price', 0)
+    position = stock_data.get('position', {})
+    
+    position_size = position.get('size', 0)
+    avg_cost = position.get('avg_cost', 0)
+    market_value = position.get('market_value', 0)
+    unrealized_pnl = position.get('unrealized_pnl', 0)
+    
+    options = stock_data.get('options', {})
+    recommendation = stock_data.get('recommendation', {})
+    
+    print(f"\n==== {ticker} Summary ====")
+    print(f"Current Price: {format_currency(price)}")
+    
+    if position_size != 0:
+        print(f"\nPosition:")
+        print(f"  Size: {position_size} shares")
+        print(f"  Average Cost: {format_currency(avg_cost)}")
+        print(f"  Market Value: {format_currency(market_value)}")
+        print(f"  Unrealized P&L: {format_currency(unrealized_pnl)}")
+    else:
+        print("\nNo current position")
+    
+    if options:
+        print("\nOption Contracts:")
+        expiration = options.get('expiration', 'Unknown')
+        print(f"  Expiration: {expiration}")
+        
+        put = options.get('put', {})
+        if put:
+            print(f"\n  Put @ {put.get('strike', 0)}:")
+            print(f"    Bid: {format_currency(put.get('bid', 0))}")
+            print(f"    Ask: {format_currency(put.get('ask', 0))}")
+            print(f"    Last: {format_currency(put.get('last', 0))}")
+        
+        call = options.get('call', {})
+        if call:
+            print(f"\n  Call @ {call.get('strike', 0)}:")
+            print(f"    Bid: {format_currency(call.get('bid', 0))}")
+            print(f"    Ask: {format_currency(call.get('ask', 0))}")
+            print(f"    Last: {format_currency(call.get('last', 0))}")
+    
+    if recommendation:
+        print("\nRecommendation:")
+        action = recommendation.get('action', 'UNKNOWN')
+        option_type = recommendation.get('type', 'UNKNOWN')
+        strike = recommendation.get('strike', 0)
+        exp = recommendation.get('expiration', 'UNKNOWN')
+        
+        print(f"  {action} {option_type} @ {strike} expiring {exp}")
+        
+        earnings = recommendation.get('earnings', {})
+        if earnings:
+            print("\nPotential Earnings:")
+            strategy = earnings.get('strategy', 'UNKNOWN')
+            max_contracts = earnings.get('max_contracts', 0)
+            premium = earnings.get('premium_per_contract', 0)
+            total = earnings.get('total_premium', 0)
+            
+            print(f"  Strategy: {strategy}")
+            print(f"  Max Contracts: {max_contracts}")
+            print(f"  Premium per Contract: {format_currency(premium)}")
+            print(f"  Total Premium: {format_currency(total)}")
+            
+            if 'return_on_capital' in earnings:
+                print(f"  Return on Capital: {format_percentage(earnings.get('return_on_capital', 0))}")
+            if 'return_on_cash' in earnings:
+                print(f"  Return on Cash: {format_percentage(earnings.get('return_on_cash', 0))}")
+
+def get_strikes_around_price(price, interval, num_strikes):
+    """
+    Get a list of strike prices around a given price
+    
+    Args:
+        price (float): Current price
+        interval (float): Strike price interval
+        num_strikes (int): Number of strikes to return (in each direction)
+        
+    Returns:
+        list: List of strike prices
+    """
+    # Round price to nearest interval
+    base_strike = round(price / interval) * interval
+    
+    # Generate strikes above and below
+    strikes = []
+    for i in range(-num_strikes, num_strikes + 1):
+        strike = base_strike + (i * interval)
+        if strike > 0:
+            strikes.append(strike)
+            
+    return strikes 

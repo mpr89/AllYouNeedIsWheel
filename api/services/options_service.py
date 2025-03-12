@@ -4,11 +4,11 @@ Handles options data retrieval and processing
 """
 
 import logging
+import math
 from datetime import datetime, timedelta
 import pandas as pd
 from core.connection import IBConnection, Option
-from core.processing import SimpleOptionsStrategy
-from core.utils import get_closest_friday, get_next_monthly_expiration
+from core.utils import get_closest_friday, get_next_monthly_expiration, get_strikes_around_price
 from config import Config
 from db.database import OptionsDatabase
 
@@ -216,30 +216,9 @@ class OptionsService:
             
         # Apply strategy to get recommendations
         if strategy == 'simple':
-            strategy_obj = SimpleOptionsStrategy()
-            recommendations = []
-            
-            for ticker in tickers:
-                try:
-                    stock_data = conn.get_stock_data(ticker)
-                    options_data = self.get_options_data(
-                        ticker,
-                        expiration=expiration,
-                        strikes=strikes,
-                        interval=interval,
-                        monthly=monthly
-                    )
-                    
-                    # Generate recommendations using strategy
-                    ticker_recs = strategy_obj.generate_recommendations(
-                        ticker,
-                        stock_data,
-                        options_data
-                    )
-                    
-                    recommendations.extend(ticker_recs)
-                except Exception as e:
-                    logger.error(f"Error getting recommendations for {ticker}: {str(e)}")
+            recommendations = self._generate_simple_options_recommendations(
+                tickers, expiration, strikes, interval
+            )
         else:
             # Unsupported strategy
             raise ValueError(f"Strategy '{strategy}' not supported")
@@ -253,6 +232,260 @@ class OptionsService:
             'expiration': expiration,
             'recommendations': recommendations
         }
+        
+    def _generate_simple_options_recommendations(self, tickers, expiration, strikes=10, interval=5):
+        """
+        Generate recommendations using the simple options strategy
+        
+        Args:
+            tickers (list): List of ticker symbols
+            expiration (str): Expiration date in YYYYMMDD format
+            strikes (int): Number of strikes to include
+            interval (int): Strike price interval
+            
+        Returns:
+            list: List of recommendation dictionaries
+        """
+        conn = self._ensure_connection()
+        recommendations = []
+        
+        # Get portfolio for position information
+        portfolio_positions = conn.get_portfolio_positions()
+        portfolio = {}
+        for pos in portfolio_positions:
+            if pos.contract.secType == 'STK':
+                ticker = pos.contract.symbol
+                portfolio[ticker] = {
+                    'size': float(pos.position),
+                    'avg_cost': float(pos.averageCost),
+                    'market_value': float(pos.marketValue),
+                    'unrealized_pnl': float(pos.unrealizedPNL)
+                }
+        
+        # Get all stock prices in one request
+        logger.info(f"Fetching stock prices for tickers: {tickers}")
+        stock_prices = conn.get_multiple_stock_prices(tickers)
+        
+        if not stock_prices:
+            logger.error("Failed to get stock prices")
+            return []
+            
+        # Prepare strikes for each ticker
+        put_otm_pct = self.config.get('put_otm_percentage', 20) 
+        call_otm_pct = self.config.get('call_otm_percentage', 20)
+        
+        strikes_map = {}
+        valid_tickers = []
+        
+        for ticker, price in stock_prices.items():
+            if price is None or math.isnan(price):
+                logger.warning(f"Could not get price for {ticker}, skipping")
+                continue
+                
+            # Calculate option strike prices at specified percentages
+            put_strike = self._adjust_to_standard_strike(price * (1 - put_otm_pct/100))
+            call_strike = self._adjust_to_standard_strike(price * (1 + call_otm_pct/100))
+            
+            strikes_map[ticker] = [put_strike, call_strike]
+            valid_tickers.append(ticker)
+        
+        # Get option prices for all tickers and strikes
+        all_option_data = conn.get_multiple_stocks_option_prices(
+            valid_tickers, 
+            expiration, 
+            strikes_map=strikes_map
+        )
+        
+        # Process each ticker with the data we've gathered
+        for ticker in valid_tickers:
+            if ticker not in stock_prices:
+                continue
+                
+            try:
+                stock_price = stock_prices[ticker]
+                
+                # Get the strikes for this ticker
+                if ticker not in strikes_map:
+                    continue
+                
+                put_strike, call_strike = strikes_map[ticker]
+                
+                # Check if we have a position in this stock
+                position_size = 0
+                avg_cost = 0
+                market_value = 0
+                unrealized_pnl = 0
+                
+                if ticker in portfolio:
+                    position_size = portfolio[ticker]['size']
+                    avg_cost = portfolio[ticker]['avg_cost']
+                    market_value = portfolio[ticker]['market_value']
+                    unrealized_pnl = portfolio[ticker]['unrealized_pnl']
+                
+                # Get options data
+                put_data = None
+                call_data = None
+                
+                if ticker in all_option_data:
+                    ticker_options = all_option_data[ticker]
+                    for option_key, option_data in ticker_options.items():
+                        # Option key is a tuple of (strike, right)
+                        strike, right = option_key
+                        if right == 'P' and abs(strike - put_strike) < 0.01:
+                            put_data = option_data
+                        elif right == 'C' and abs(strike - call_strike) < 0.01:
+                            call_data = option_data
+                
+                # If options data not found in bulk, try individual requests
+                if put_data is None:
+                    put_contract = conn.create_option_contract(ticker, expiration, put_strike, 'P')
+                    put_data = conn.get_option_price(put_contract)
+                
+                if call_data is None:
+                    call_contract = conn.create_option_contract(ticker, expiration, call_strike, 'C')
+                    call_data = conn.get_option_price(call_contract)
+                
+                # Determine strategy based on position
+                strategy = "NEUTRAL"  # Default strategy
+                
+                if position_size > 0:
+                    strategy = "BULLISH"  # We own the stock, sell calls
+                elif position_size < 0:
+                    strategy = "BEARISH"  # We are short the stock, sell puts
+                
+                # Calculate potential earnings for options
+                put_earnings = None
+                call_earnings = None
+                
+                if put_data and 'bid' in put_data and put_data['bid'] is not None:
+                    # For cash-secured puts
+                    max_contracts = math.floor(self.config.get('max_position_value', 20000) / (put_strike * 100))
+                    premium_per_contract = put_data['bid'] * 100  # Convert to dollar amount
+                    total_premium = premium_per_contract * max_contracts
+                    return_on_cash = (total_premium / (put_strike * 100 * max_contracts)) * 100 if max_contracts > 0 else 0
+                    
+                    put_earnings = {
+                        'strategy': 'Cash-Secured Put',
+                        'max_contracts': max_contracts,
+                        'premium_per_contract': premium_per_contract,
+                        'total_premium': total_premium,
+                        'return_on_cash': return_on_cash
+                    }
+                
+                if call_data and 'bid' in call_data and call_data['bid'] is not None and position_size > 0:
+                    # For covered calls (only if we own the stock)
+                    max_contracts = math.floor(abs(position_size) / 100)  # Each contract covers 100 shares
+                    premium_per_contract = call_data['bid'] * 100  # Convert to dollar amount
+                    total_premium = premium_per_contract * max_contracts
+                    return_on_capital = (total_premium / (stock_price * 100 * max_contracts)) * 100 if max_contracts > 0 else 0
+                    
+                    call_earnings = {
+                        'strategy': 'Covered Call',
+                        'max_contracts': max_contracts,
+                        'premium_per_contract': premium_per_contract,
+                        'total_premium': total_premium,
+                        'return_on_capital': return_on_capital
+                    }
+                
+                # Create recommendation based on portfolio position
+                recommendation = {}
+                
+                if strategy == "BULLISH" and position_size > 0:
+                    # We own the stock, recommend selling calls
+                    recommendation = {
+                        'action': 'SELL',
+                        'type': 'CALL',
+                        'strike': call_strike,
+                        'expiration': expiration,
+                        'earnings': call_earnings
+                    }
+                elif strategy == "BEARISH" and position_size < 0:
+                    # We are short the stock, recommend selling puts
+                    recommendation = {
+                        'action': 'SELL',
+                        'type': 'PUT',
+                        'strike': put_strike,
+                        'expiration': expiration,
+                        'earnings': put_earnings
+                    }
+                else:
+                    # Neutral strategy or no position
+                    # For simplicity, recommend selling puts as it requires less capital than buying stock
+                    recommendation = {
+                        'action': 'SELL',
+                        'type': 'PUT',
+                        'strike': put_strike,
+                        'expiration': expiration,
+                        'earnings': put_earnings
+                    }
+                    
+                    # Also include call option as a bullish alternative
+                    recommendation['alternative'] = {
+                        'action': 'BUY',
+                        'type': 'CALL',
+                        'strike': call_strike,
+                        'expiration': expiration
+                    }
+                
+                # Build and return the result
+                result = {
+                    'ticker': ticker,
+                    'price': stock_price,
+                    'strategy': strategy,
+                    'position': {
+                        'size': position_size,
+                        'avg_cost': avg_cost,
+                        'market_value': market_value,
+                        'unrealized_pnl': unrealized_pnl
+                    },
+                    'options': {
+                        'expiration': expiration,
+                        'put': {
+                            'strike': put_strike,
+                            'bid': put_data['bid'] if put_data and 'bid' in put_data else None,
+                            'ask': put_data['ask'] if put_data and 'ask' in put_data else None,
+                            'last': put_data['last'] if put_data and 'last' in put_data else None
+                        },
+                        'call': {
+                            'strike': call_strike,
+                            'bid': call_data['bid'] if call_data and 'bid' in call_data else None,
+                            'ask': call_data['ask'] if call_data and 'ask' in call_data else None,
+                            'last': call_data['last'] if call_data and 'last' in call_data else None
+                        }
+                    },
+                    'recommendation': recommendation
+                }
+                
+                recommendations.append(result)
+            except Exception as e:
+                logger.error(f"Error processing {ticker}: {str(e)}")
+                import traceback
+                logger.error(traceback.format_exc())
+        
+        return recommendations
+        
+    def _adjust_to_standard_strike(self, strike):
+        """
+        Adjust a strike price to a standard option strike increment
+        
+        Args:
+            strike: Strike price
+            
+        Returns:
+            float: Adjusted strike price
+        """
+        if strike <= 5:
+            # $0.50 increments for stocks under $5
+            return round(strike * 2) / 2
+        elif strike <= 25:
+            # $1.00 increments for stocks under $25
+            return round(strike)
+        elif strike <= 200:
+            # $5.00 increments for stocks under $200
+            return round(strike / 5) * 5
+        else:
+            # $10.00 increments for stocks over $200
+            return round(strike / 10) * 10
     
     def get_available_strategies(self):
         """

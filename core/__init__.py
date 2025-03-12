@@ -8,23 +8,20 @@ from .utils import (
     rotate_logs, 
     rotate_reports, 
     get_closest_friday, 
-    get_next_monthly_expiration
+    get_next_monthly_expiration,
+    print_stock_summary,
+    format_currency,
+    format_percentage,
+    get_strikes_around_price
 )
 
 # Import connection classes
 from .connection import IBConnection, Option
 
-# Import processing classes
-from .processing import (
-    SimpleOptionsStrategy,
-    print_stock_summary,
-    format_currency,
-    format_percentage
-)
-
 __all__ = [
     # Connection
     'IBConnection',
+    'Option',
     
     # Utils
     'rotate_logs',
@@ -32,10 +29,8 @@ __all__ = [
     'setup_logging',
     'get_closest_friday',
     'get_next_monthly_expiration',
-    
-    # Processing
     'print_stock_summary',
-    'SimpleOptionsStrategy',
     'format_currency',
-    'format_percentage'
+    'format_percentage',
+    'get_strikes_around_price'
 ] 

@@ -5,7 +5,7 @@ Manages portfolio data and calculations
 
 import logging
 from core.connection import IBConnection
-from core.processing import print_stock_summary
+from core.utils import print_stock_summary
 from config import Config
 
 logger = logging.getLogger('api.services.portfolio')
