@@ -29,21 +29,33 @@ class OptionsService:
         """
         Ensure that the IB connection exists and is connected
         """
-        if self.connection is None or not self.connection.is_connected():
-            # Generate a unique client ID based on current timestamp and random number
-            # to avoid conflicts with other connections
-            unique_client_id = int(time.time() % 10000) + random.randint(1000, 9999)
-            logger.info(f"Creating new TWS connection with client ID: {unique_client_id}")
-            
-            self.connection = IBConnection(
-                host=self.config.get('host', '127.0.0.1'),
-                port=self.config.get('port', 7497),
-                client_id=unique_client_id,  # Use the unique client ID instead of fixed ID 1
-                timeout=self.config.get('timeout', 20),
-                readonly=self.config.get('readonly', True)
-            )
-            self.connection.connect()
-        return self.connection
+        try:
+            if self.connection is None or not self.connection.is_connected():
+                # Generate a unique client ID based on current timestamp and random number
+                # to avoid conflicts with other connections
+                unique_client_id = int(time.time() % 10000) + random.randint(1000, 9999)
+                logger.info(f"Creating new TWS connection with client ID: {unique_client_id}")
+                
+                # Create new connection
+                self.connection = IBConnection(
+                    host=self.config.get('host', '127.0.0.1'),
+                    port=self.config.get('port', 7497),
+                    client_id=unique_client_id,  # Use the unique client ID instead of fixed ID 1
+                    timeout=self.config.get('timeout', 20),
+                    readonly=self.config.get('readonly', True)
+                )
+                
+                # Try to connect with proper error handling
+                if not self.connection.connect():
+                    logger.error("Failed to connect to TWS/IB Gateway")
+                else:
+                    logger.info("Successfully connected to TWS/IB Gateway")
+            return self.connection
+        except Exception as e:
+            logger.error(f"Error ensuring connection: {str(e)}")
+            if "There is no current event loop" in str(e):
+                logger.error("Asyncio event loop error - please check connection.py for proper handling")
+            return None
         
     def _get_stock_data(self, ticker):
         """
@@ -91,83 +103,108 @@ class OptionsService:
         
         Args:
             ticker (str): Stock ticker symbol
-            expiration (str, optional): Expiration date (YYYYMMDD format)
-            strikes (int, optional): Number of strikes to include
-            interval (int, optional): Strike price interval
-            monthly (bool, optional): Whether to use monthly expiration
+            expiration (str, optional): Option expiration date (format: YYYYMMDD). Defaults to None.
+            strikes (int, optional): Number of strikes around current price. Defaults to 10.
+            interval (int, optional): Interval between strikes in dollars or percentage. Defaults to 5.
+            monthly (bool, optional): Whether to use monthly expirations only. Defaults to False.
             
         Returns:
-            dict: Options data including calls and puts
+            dict: Dictionary with options data
         """
+        logger.info(f"Getting options data for {ticker}")
+        
+        # Get connection to IB
         conn = self._ensure_connection()
-        
-        # Get stock data
-        # Using our custom method instead of conn.get_stock_data
-        stock_data = self._get_stock_data(ticker)
-        current_price = stock_data.get('last', 0)
-        
-        # Determine expiration date if not provided
-        if expiration is None:
-            if monthly:
-                expiration = get_next_monthly_expiration()
-            else:
-                expiration = get_closest_friday()
-            expiration = expiration.strftime('%Y%m%d')
-        
-        # Get options chain
-        options_chain = conn.get_options_chain(
-            ticker, 
-            expiration=expiration,
-            strikes=strikes,
-            interval=interval
-        )
-        
-        # Extract calls and puts
-        calls = []
-        puts = []
-        
-        for call in options_chain.get('calls', []):
-            call_data = {
-                'strike': float(call.get('strike', 0)),
-                'last_price': float(call.get('last', 0)),
-                'bid': float(call.get('bid', 0)),
-                'ask': float(call.get('ask', 0)),
-                'implied_volatility': float(call.get('impliedVol', 0)),
-                'delta': float(call.get('delta', 0)),
-                'gamma': float(call.get('gamma', 0)),
-                'vega': float(call.get('vega', 0)),
-                'theta': float(call.get('theta', 0)),
-                'open_interest': int(call.get('openInterest', 0)),
-                'volume': int(call.get('volume', 0)),
+        if conn is None:
+            logger.error("Failed to establish connection to TWS/IB Gateway")
+            return {
+                "error": "Failed to connect to TWS/IB Gateway. Please make sure it's running and properly configured.",
+                "status": "error",
+                "ticker": ticker
             }
-            calls.append(call_data)
-            
-        for put in options_chain.get('puts', []):
-            put_data = {
-                'strike': float(put.get('strike', 0)),
-                'last_price': float(put.get('last', 0)),
-                'bid': float(put.get('bid', 0)),
-                'ask': float(put.get('ask', 0)),
-                'implied_volatility': float(put.get('impliedVol', 0)),
-                'delta': float(put.get('delta', 0)),
-                'gamma': float(put.get('gamma', 0)),
-                'vega': float(put.get('vega', 0)),
-                'theta': float(put.get('theta', 0)),
-                'open_interest': int(put.get('openInterest', 0)),
-                'volume': int(put.get('volume', 0)),
-            }
-            puts.append(put_data)
-            
-        # Prepare response
-        result = {
-            'ticker': ticker,
-            'current_price': current_price,
-            'expiration': expiration,
-            'calls': calls,
-            'puts': puts,
-        }
         
-        return result
+        try:
+            # Get stock data
+            stock_data = self._get_stock_data(ticker)
+            if stock_data is None:
+                logger.error(f"Failed to get stock data for {ticker}")
+                return {
+                    "error": f"Failed to get stock data for {ticker}",
+                    "status": "error",
+                    "ticker": ticker
+                }
+            
+            current_price = stock_data.get('last', 0)
+            
+            # Determine expiration date if not provided
+            if expiration is None:
+                if monthly:
+                    expiration = get_next_monthly_expiration()
+                else:
+                    expiration = get_closest_friday()
+                expiration = expiration.strftime('%Y%m%d')
+            
+            # Get options chain
+            options_chain = conn.get_options_chain(
+                ticker, 
+                expiration=expiration,
+                strikes=strikes,
+                interval=interval
+            )
+            
+            # Extract calls and puts
+            calls = []
+            puts = []
+            
+            for call in options_chain.get('calls', []):
+                call_data = {
+                    'strike': float(call.get('strike', 0)),
+                    'last_price': float(call.get('last', 0)),
+                    'bid': float(call.get('bid', 0)),
+                    'ask': float(call.get('ask', 0)),
+                    'implied_volatility': float(call.get('impliedVol', 0)),
+                    'delta': float(call.get('delta', 0)),
+                    'gamma': float(call.get('gamma', 0)),
+                    'vega': float(call.get('vega', 0)),
+                    'theta': float(call.get('theta', 0)),
+                    'open_interest': int(call.get('openInterest', 0)),
+                    'volume': int(call.get('volume', 0)),
+                }
+                calls.append(call_data)
+                
+            for put in options_chain.get('puts', []):
+                put_data = {
+                    'strike': float(put.get('strike', 0)),
+                    'last_price': float(put.get('last', 0)),
+                    'bid': float(put.get('bid', 0)),
+                    'ask': float(put.get('ask', 0)),
+                    'implied_volatility': float(put.get('impliedVol', 0)),
+                    'delta': float(put.get('delta', 0)),
+                    'gamma': float(put.get('gamma', 0)),
+                    'vega': float(put.get('vega', 0)),
+                    'theta': float(put.get('theta', 0)),
+                    'open_interest': int(put.get('openInterest', 0)),
+                    'volume': int(put.get('volume', 0)),
+                }
+                puts.append(put_data)
+            
+            # Prepare response
+            result = {
+                'ticker': ticker,
+                'current_price': current_price,
+                'expiration': expiration,
+                'calls': calls,
+                'puts': puts,
+            }
+            
+            return result
+        except Exception as e:
+            logger.error(f"Error getting options data for {ticker}: {str(e)}")
+            return {
+                "error": f"Error getting options data for {ticker}: {str(e)}",
+                "status": "error",
+                "ticker": ticker
+            }
     
     def get_option_chain(self, ticker, expiration=None):
         """

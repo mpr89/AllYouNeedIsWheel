@@ -75,6 +75,22 @@ class IBConnection:
         # Suppress ib_insync logs when initializing
         suppress_ib_logs()
     
+    def _ensure_event_loop(self):
+        """
+        Ensure that an event loop exists for the current thread
+        """
+        try:
+            # Check if an event loop exists and is running
+            loop = asyncio.get_event_loop()
+            if not loop.is_running():
+                pass  # Loop exists but not running, which is fine
+        except RuntimeError:
+            # No event loop exists in this thread, create one
+            logger.debug("Creating new event loop for thread")
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        return True
+    
     def connect(self):
         """
         Connect to TWS/IB Gateway
@@ -91,6 +107,9 @@ class IBConnection:
                 return True
             
             logger.info(f"Connecting to IB at {self.host}:{self.port} with client ID {self.client_id}")
+            
+            # Ensure event loop exists
+            self._ensure_event_loop()
             
             # Set read-only mode if requested
             if self.readonly:
@@ -112,6 +131,9 @@ class IBConnection:
             if "clientId" in error_msg and "already in use" in error_msg:
                 logger.error(f"Connection error: Client ID {self.client_id} is already in use by another application.")
                 logger.error("Please try using a different client ID, or close other applications connected to TWS/IB Gateway.")
+            elif "There is no current event loop" in error_msg:
+                logger.error("Asyncio event loop error detected. This may be due to threading issues.")
+                logger.error("Please try running your code in the main thread or configuring asyncio properly.")
             else:
                 logger.error(f"Error connecting to IB: {error_msg}")
                 # Log more detailed error information for debugging
@@ -155,6 +177,9 @@ class IBConnection:
                 return None
         
         try:
+            # Ensure event loop exists for this thread
+            self._ensure_event_loop()
+            
             # Create a stock contract
             contract = Contract(symbol=symbol, secType='STK', exchange='SMART', currency='USD')
             
@@ -201,8 +226,20 @@ class IBConnection:
             return last_price
             
         except Exception as e:
-            logger.error(f"Error getting {symbol} price: {e}")
-            return None
+            error_msg = str(e)
+            if "There is no current event loop" in error_msg:
+                logger.error("Asyncio event loop error in get_stock_price. Retrying with new event loop.")
+                # Try one more time with a fresh event loop
+                try:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    return self.get_stock_price(symbol)
+                except Exception as retry_error:
+                    logger.error(f"Failed to get stock price after event loop retry: {str(retry_error)}")
+                    return None
+            else:
+                logger.error(f"Error getting {symbol} price: {error_msg}")
+                return None
             
     def get_multiple_stock_prices(self, symbols):
         """
@@ -999,6 +1036,9 @@ class IBConnection:
                 return None
         
         try:
+            # Ensure event loop exists for this thread
+            self._ensure_event_loop()
+            
             # Create a stock contract
             contract = Contract(symbol=symbol, secType='STK', exchange='SMART', currency='USD')
             
@@ -1056,5 +1096,17 @@ class IBConnection:
             return result
         
         except Exception as e:
-            logger.error(f"Error getting stock data for {symbol}: {str(e)}")
-            return None 
+            error_msg = str(e)
+            if "There is no current event loop" in error_msg:
+                logger.error("Asyncio event loop error in get_stock_data. Retrying with new event loop.")
+                # Try one more time with a fresh event loop
+                try:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    return self.get_stock_data(symbol)
+                except Exception as retry_error:
+                    logger.error(f"Failed to get stock data after event loop retry: {str(retry_error)}")
+                    return None
+            else:
+                logger.error(f"Error getting stock data for {symbol}: {error_msg}")
+                return None 

@@ -24,21 +24,33 @@ class PortfolioService:
         """
         Ensure that the IB connection exists and is connected
         """
-        if self.connection is None or not self.connection.is_connected():
-            # Generate a unique client ID based on current timestamp and random number
-            # to avoid conflicts with other connections
-            unique_client_id = int(time.time() % 10000) + random.randint(1000, 9999)
-            logger.info(f"Creating new TWS connection with client ID: {unique_client_id}")
-            
-            self.connection = IBConnection(
-                host=self.config.get('host', '127.0.0.1'),
-                port=self.config.get('port', 7497),
-                client_id=unique_client_id,  # Use the unique client ID instead of fixed ID 1
-                timeout=self.config.get('timeout', 20),
-                readonly=self.config.get('readonly', True)
-            )
-            self.connection.connect()
-        return self.connection
+        try:
+            if self.connection is None or not self.connection.is_connected():
+                # Generate a unique client ID based on current timestamp and random number
+                # to avoid conflicts with other connections
+                unique_client_id = int(time.time() % 10000) + random.randint(1000, 9999)
+                logger.info(f"Creating new TWS connection with client ID: {unique_client_id}")
+                
+                # Create new connection
+                self.connection = IBConnection(
+                    host=self.config.get('host', '127.0.0.1'),
+                    port=self.config.get('port', 7497),
+                    client_id=unique_client_id,  # Use the unique client ID instead of fixed ID 1
+                    timeout=self.config.get('timeout', 20),
+                    readonly=self.config.get('readonly', True)
+                )
+                
+                # Try to connect with proper error handling
+                if not self.connection.connect():
+                    logger.error("Failed to connect to TWS/IB Gateway")
+                else:
+                    logger.info("Successfully connected to TWS/IB Gateway")
+            return self.connection
+        except Exception as e:
+            logger.error(f"Error ensuring connection: {str(e)}")
+            if "There is no current event loop" in str(e):
+                logger.error("Asyncio event loop error - please check connection.py for proper handling")
+            return None
         
     def get_portfolio_summary(self):
         """
