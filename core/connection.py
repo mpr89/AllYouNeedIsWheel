@@ -11,7 +11,8 @@ import json
 import threading
 import traceback
 from typing import Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, time
+import pytz
 
 # Import ib_insync
 from ib_insync import IB, Stock, Option, Contract, util
@@ -816,21 +817,25 @@ class IBConnection:
         
         Returns:
             dict: Dictionary containing account information and positions
-                - account_id: Account ID
-                - available_cash: Available cash for trading
-                - account_value: Total account value (net liquidation)
-                - positions: Dictionary of current positions, keyed by symbol
-                    - Each position contains: shares, avg_cost, market_value, etc.
         """
+        is_market_open = self._is_market_hours()
+        
         if not self.is_connected():
-            logger.warning("Not connected to IB. Attempting to connect...")
-            if not self.connect():
+            if is_market_open:
+                logger.warning("Not connected to IB during market hours. Attempting to connect...")
+                if not self.connect():
+                    raise ConnectionError("Failed to connect to IB during market hours")
+            else:
+                logger.info("Market is closed. Using mock portfolio data.")
                 return self._generate_mock_portfolio()
         
         try:
             # Get account summary
             account_id = self.ib.managedAccounts()[0]
             account_values = self.ib.accountSummary(account_id)
+            
+            if not account_values and is_market_open:
+                raise ValueError("No account data available during market hours")
             
             # Extract relevant account information
             account_info = {
@@ -863,9 +868,10 @@ class IBConnection:
                     'contract': position.contract
                 }
             
-            if not positions and self.readonly:
-                # When in read-only mode or no positions found, return mock portfolio
-                logger.debug("No positions found, returning mock portfolio data")
+            if not positions and is_market_open:
+                raise ValueError("No position data available during market hours")
+            elif not positions:
+                logger.info("No positions found during closed market. Using mock portfolio data.")
                 return self._generate_mock_portfolio()
             
             return {
@@ -876,8 +882,12 @@ class IBConnection:
             }
         
         except Exception as e:
-            logger.error(f"Error getting portfolio: {e}")
-            return self._generate_mock_portfolio()
+            if is_market_open:
+                logger.error(f"Error getting portfolio during market hours: {str(e)}")
+                raise
+            else:
+                logger.info(f"Error getting portfolio during closed market. Using mock portfolio data.")
+                return self._generate_mock_portfolio()
 
     def get_options_chain(self, ticker, expiration=None, strikes=10, interval=5):
         """Get options chain for a ticker around current price"""
@@ -1367,6 +1377,28 @@ class IBConnection:
             'is_mock': True
         }
 
+    def _is_market_hours(self):
+        """
+        Check if the US market is currently open
+        
+        Returns:
+            bool: True if market is open, False otherwise
+        """
+        # Get current US Eastern time
+        eastern = pytz.timezone('US/Eastern')
+        now = datetime.now(eastern)
+        
+        # Check if it's a weekday
+        if now.weekday() >= 5:  # 5 = Saturday, 6 = Sunday
+            return False
+            
+        # Regular market hours are 9:30 AM to 4:00 PM Eastern
+        market_open = time(9, 30)
+        market_close = time(16, 0)
+        current_time = now.time()
+        
+        return market_open <= current_time <= market_close
+
     def get_stock_data(self, symbol):
         """
         Get comprehensive stock data including price, volume, and other metrics
@@ -1377,9 +1409,15 @@ class IBConnection:
         Returns:
             dict: Dictionary with stock data or None if error
         """
+        is_market_open = self._is_market_hours()
+        
         if not self.is_connected():
-            logger.warning("Not connected to IB. Attempting to connect...")
-            if not self.connect():
+            if is_market_open:
+                logger.warning("Not connected to IB during market hours. Attempting to connect...")
+                if not self.connect():
+                    raise ConnectionError("Failed to connect to IB during market hours")
+            else:
+                logger.info("Market is closed. Using mock data.")
                 return self._generate_mock_stock_data(symbol)
         
         try:
@@ -1393,12 +1431,10 @@ class IBConnection:
             tickers = self.ib.reqTickers(contract)
             
             if not tickers:
-                logger.warning(f"No ticker data for {symbol}. Trying historical data.")
-                historical_data = self.get_historical_data(symbol)
-                if historical_data:
-                    return historical_data
+                if is_market_open:
+                    raise ValueError(f"No ticker data available for {symbol} during market hours")
                 else:
-                    logger.warning(f"No historical data for {symbol} either. Using mock data.")
+                    logger.info(f"No ticker data for {symbol} during closed market. Using mock data.")
                     return self._generate_mock_stock_data(symbol)
             
             # Get the latest ticker data
@@ -1413,19 +1449,10 @@ class IBConnection:
             low = ticker_data.low if ticker_data.low else last_price
             open_price = ticker_data.open if ticker_data.open else last_price
             close_price = ticker_data.close if ticker_data.close else last_price
-            last_rth_trade = ticker_data.lastRTHTrade.price if hasattr(ticker_data, 'lastRTHTrade') and ticker_data.lastRTHTrade else last_price
             
-            # If no last price is available, check other prices
-            if last_price is None:
-                if bid_price and ask_price:
-                    # Use midpoint of bid-ask spread
-                    last_price = (bid_price + ask_price) / 2
-                elif bid_price:
-                    last_price = bid_price
-                elif ask_price:
-                    last_price = ask_price
-                elif last_rth_trade:
-                    last_price = last_rth_trade
+            # During market hours, we want real data only
+            if is_market_open and last_price is None:
+                raise ValueError(f"No real-time price data available for {symbol} during market hours")
             
             # Build and return the result
             result = {
@@ -1440,26 +1467,20 @@ class IBConnection:
                 'volume': volume,
                 'halted': ticker_data.halted if hasattr(ticker_data, 'halted') else False,
                 'timestamp': ticker_data.date.isoformat() if hasattr(ticker_data, 'date') else datetime.now().isoformat(),
-                'is_historical': False  # This is real-time data
+                'is_historical': False
             }
             
             return result
         
         except Exception as e:
-            logger.error(f"Error getting stock data for {symbol}: {str(e)}")
-            logger.debug(traceback.format_exc())
-            
-            # Try historical data as fallback
-            try:
-                logger.info(f"Attempting to get historical data for {symbol} as fallback")
-                historical_data = self.get_historical_data(symbol)
-                if historical_data:
-                    return historical_data
-            except Exception as hist_error:
-                logger.error(f"Historical data fallback also failed: {str(hist_error)}")
-                
-            # As a last resort, use mock data
-            return self._generate_mock_stock_data(symbol)
+            if is_market_open:
+                # During market hours, let errors propagate
+                logger.error(f"Error getting stock data for {symbol} during market hours: {str(e)}")
+                raise
+            else:
+                # Outside market hours, fall back to mock data
+                logger.info(f"Error getting stock data for {symbol} during closed market. Using mock data.")
+                return self._generate_mock_stock_data(symbol)
 
     def get_historical_option_data(self, symbol, expiration, right='C', strike=None, duration='1 D', bar_size='1 day'):
         """
