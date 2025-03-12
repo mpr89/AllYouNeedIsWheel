@@ -1,12 +1,20 @@
 """
-Connection module for establishing connection with Interactive Brokers
+Stock and Options Trading Connection Module for Interactive Brokers
 """
 
-import time
-from ib_insync import IB, util, Option, Contract
 import logging
+import asyncio
+import math
+import time
+import os
+import json
+import threading
+import traceback
 from typing import Optional, Dict, Any
 from datetime import datetime
+
+# Import ib_insync
+from ib_insync import IB, Stock, Option, Contract, util
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
@@ -836,4 +844,139 @@ class IBConnection:
         
         except Exception as e:
             logger.error(f"Error getting portfolio: {e}")
-            return None 
+            return None
+
+    def get_options_chain(self, ticker, expiration=None, strikes=10, interval=5):
+        """Get options chain for a ticker around current price"""
+        # Implementation details...
+        
+    def get_full_options_chain(self, ticker, expiration=None):
+        """
+        Get the full options chain with greeks for a ticker
+        
+        Args:
+            ticker (str): Stock ticker symbol
+            expiration (str, optional): Expiration date in YYYYMMDD format
+            
+        Returns:
+            dict: Dictionary with calls and puts with full option data including greeks
+        """
+        try:
+            if not self.is_connected():
+                logger.error("Not connected to IB")
+                return None
+                
+            # Create qualifier for the stock
+            stock = Stock(ticker, 'SMART', 'USD')
+                
+            # Get current stock price to determine strikes range
+            self.ib.qualifyContracts(stock)
+            # Request snapshot to make sure we have current data
+            self.ib.reqMktData(stock)
+            self.ib.sleep(1)  # Wait for data to arrive
+            
+            ticker_obj = self.ib.reqTickers(stock)[0]
+            current_price = ticker_obj.marketPrice()
+            
+            if expiration is None:
+                # Get available expirations and use the closest one
+                expirations = self.get_option_expirations(ticker)
+                if not expirations:
+                    logger.error(f"No expirations found for {ticker}")
+                    return None
+                # Use the closest expiration
+                expiration = expirations[0]
+            
+            # Create wide strike range around current price to get all strikes
+            min_strike = int(current_price * 0.5)  # 50% below current price
+            max_strike = int(current_price * 1.5)  # 50% above current price
+            
+            # Create chains object with all strikes
+            chains = self.ib.reqSecDefOptParams(stock.symbol, '', stock.secType, stock.conId)
+            
+            if not chains:
+                logger.error(f"No option chains found for {ticker}")
+                return None
+                
+            # Filter for the exchange we want
+            chain = next((c for c in chains if c.exchange == 'SMART'), None)
+            if chain is None:
+                logger.error(f"No SMART exchange found for {ticker}")
+                return None
+                
+            # Get all strikes within our range
+            strikes = [strike for strike in chain.strikes 
+                      if min_strike <= strike <= max_strike]
+                
+            if not strikes:
+                logger.error(f"No strikes found for {ticker}")
+                return None
+                
+            # Create list of option contracts
+            option_contracts = []
+            
+            for strike in strikes:
+                # Create a call and put contract for each strike
+                call = Option(ticker, expiration, strike, 'C', 'SMART', 'USD')
+                put = Option(ticker, expiration, strike, 'P', 'SMART', 'USD')
+                option_contracts.extend([call, put])
+                
+            # Qualify all contracts at once
+            qualified_contracts = self.ib.qualifyContracts(*option_contracts)
+            
+            if not qualified_contracts:
+                logger.error(f"Failed to qualify option contracts for {ticker}")
+                return None
+                
+            # Request market data for all contracts
+            tickers = self.ib.reqTickers(*qualified_contracts)
+            
+            # Organize the data
+            calls = []
+            puts = []
+            
+            for ticker_obj in tickers:
+                contract = ticker_obj.contract
+                
+                # Skip if we couldn't get market data
+                if not hasattr(ticker_obj, 'modelGreeks') or ticker_obj.modelGreeks is None:
+                    continue
+                    
+                option_data = {
+                    'strike': float(contract.strike),
+                    'bid': float(ticker_obj.bid) if ticker_obj.bid else 0,
+                    'ask': float(ticker_obj.ask) if ticker_obj.ask else 0,
+                    'last': float(ticker_obj.last) if ticker_obj.last else 0,
+                    'volume': int(ticker_obj.volume) if ticker_obj.volume else 0,
+                    'openInterest': int(ticker_obj.open_interest) if hasattr(ticker_obj, 'open_interest') else 0,
+                    'impliedVol': float(ticker_obj.impliedVol) if ticker_obj.impliedVol else 0,
+                    'delta': float(ticker_obj.modelGreeks.delta) if ticker_obj.modelGreeks else 0,
+                    'gamma': float(ticker_obj.modelGreeks.gamma) if ticker_obj.modelGreeks else 0,
+                    'vega': float(ticker_obj.modelGreeks.vega) if ticker_obj.modelGreeks else 0,
+                    'theta': float(ticker_obj.modelGreeks.theta) if ticker_obj.modelGreeks else 0,
+                }
+                
+                if contract.right == 'C':
+                    calls.append(option_data)
+                else:
+                    puts.append(option_data)
+                    
+            # Sort calls and puts by strike
+            calls.sort(key=lambda x: x['strike'])
+            puts.sort(key=lambda x: x['strike'])
+            
+            return {
+                'calls': calls,
+                'puts': puts,
+                'underlying_price': current_price,
+                'expiration': expiration
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting full options chain for {ticker}: {e}")
+            logger.error(traceback.format_exc())
+            return None
+    
+    def get_option_price(self, option_contract):
+        """Get price for a specific option contract"""
+        # ... existing code ... 

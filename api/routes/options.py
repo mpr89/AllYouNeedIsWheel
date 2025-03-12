@@ -8,22 +8,21 @@ from api.services.options_service import OptionsService
 bp = Blueprint('options', __name__, url_prefix='/api/options')
 options_service = OptionsService()
 
-@bp.route('/<ticker>', methods=['GET'])
-def get_options_data(ticker):
+@bp.route('/', methods=['GET'])
+def get_options():
     """
     Get options data for a specific ticker
-    
-    Args:
-        ticker (str): Stock ticker symbol
     """
     try:
-        # Parse query parameters
-        expiration = request.args.get('expiration', None)
+        ticker = request.args.get('ticker')
+        if not ticker:
+            return jsonify({'error': 'Ticker symbol is required'}), 400
+            
+        expiration = request.args.get('expiration')
         strikes = request.args.get('strikes', 10, type=int)
         interval = request.args.get('interval', 5, type=int)
         monthly = request.args.get('monthly', False, type=bool)
         
-        # Get options data
         results = options_service.get_options_data(
             ticker, 
             expiration=expiration,
@@ -34,36 +33,63 @@ def get_options_data(ticker):
         return jsonify(results)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
-@bp.route('/<ticker>/chain', methods=['GET'])
-def get_option_chain(ticker):
+        
+@bp.route('/chain', methods=['GET'])
+def get_option_chain():
     """
-    Get the full option chain for a specific ticker
-    
-    Args:
-        ticker (str): Stock ticker symbol
+    Get the full options chain for a ticker
     """
     try:
-        # Parse query parameters
-        expiration = request.args.get('expiration', None)
+        ticker = request.args.get('ticker')
+        if not ticker:
+            return jsonify({'error': 'Ticker symbol is required'}), 400
+            
+        expiration = request.args.get('expiration')
         
-        # Get option chain
         results = options_service.get_option_chain(ticker, expiration=expiration)
         return jsonify(results)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
+        
 @bp.route('/expirations', methods=['GET'])
 def get_expirations():
     """
-    Get available option expiration dates
+    Get available option expiration dates for a ticker
+    """
+    try:
+        ticker = request.args.get('ticker')
+        if not ticker:
+            return jsonify({'error': 'Ticker symbol is required'}), 400
+            
+        results = options_service.get_expirations(ticker)
+        return jsonify(results)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@bp.route('/delta-targeted', methods=['GET'])
+def get_delta_targeted_options():
+    """
+    Get options with delta around 0.1 for each ticker in the portfolio
     """
     try:
         # Parse query parameters
-        ticker = request.args.get('ticker', None)
+        tickers = request.args.get('tickers', None)
+        if tickers:
+            tickers = tickers.split(',')
+            
+        target_delta = request.args.get('delta', 0.1, type=float)
+        delta_range = request.args.get('range', 0.05, type=float)
+        expiration = request.args.get('expiration')
+        monthly = request.args.get('monthly', False, type=bool)
         
-        # Get expirations
-        results = options_service.get_expirations(ticker)
+        # Get delta-targeted options
+        results = options_service.get_delta_targeted_options(
+            tickers=tickers,
+            target_delta=target_delta,
+            delta_range=delta_range,
+            expiration=expiration,
+            monthly=monthly
+        )
         return jsonify(results)
     except Exception as e:
         return jsonify({'error': str(e)}), 500 

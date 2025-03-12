@@ -271,4 +271,175 @@ class OptionsService:
         
         return {
             'strategies': strategies
-        } 
+        }
+        
+    def get_delta_targeted_options(self, tickers=None, target_delta=0.1, delta_range=0.05, expiration=None, monthly=False):
+        """
+        Find options with delta around the target value for use in the dashboard
+        
+        Args:
+            tickers (list, optional): List of ticker symbols. If None, uses portfolio positions.
+            target_delta (float, optional): Target delta value. Default 0.1.
+            delta_range (float, optional): Acceptable range around target delta. Default 0.05.
+            expiration (str, optional): Expiration date in YYYYMMDD format.
+            monthly (bool, optional): Whether to use monthly expiration.
+            
+        Returns:
+            dict: Options data keyed by ticker with delta-targeted options
+        """
+        conn = self._ensure_connection()
+        
+        # If no tickers provided, get them from portfolio
+        if tickers is None:
+            portfolio = conn.get_portfolio_positions()
+            tickers = [pos.contract.symbol for pos in portfolio
+                      if pos.contract.secType == 'STK']
+        
+        # Determine expiration date if not provided
+        if expiration is None:
+            if monthly:
+                expiration_date = get_next_monthly_expiration()
+            else:
+                expiration_date = get_closest_friday()
+            expiration = expiration_date.strftime('%Y%m%d')
+            
+        # Prepare result structure
+        result = {
+            'expiration': expiration,
+            'target_delta': target_delta,
+            'data': {}
+        }
+            
+        # Process each ticker
+        for ticker in tickers:
+            try:
+                # Get stock data
+                stock_data = conn.get_stock_data(ticker)
+                current_price = stock_data.get('last', 0)
+                
+                # Get full options chain with greeks
+                options_chain = conn.get_full_options_chain(ticker, expiration)
+                
+                # Find call and put with delta closest to target
+                best_call = None
+                best_put = None
+                best_call_delta_diff = 1.0
+                best_put_delta_diff = 1.0
+                
+                # Process calls
+                for call in options_chain.get('calls', []):
+                    if not call.get('delta'):
+                        continue
+                        
+                    delta = abs(float(call.get('delta', 0)))
+                    # We want OTM calls with positive delta close to target
+                    if float(call.get('strike', 0)) > current_price:
+                        delta_diff = abs(delta - target_delta)
+                        if delta_diff < best_call_delta_diff and delta_diff <= delta_range:
+                            best_call = call
+                            best_call_delta_diff = delta_diff
+                
+                # Process puts
+                for put in options_chain.get('puts', []):
+                    if not put.get('delta'):
+                        continue
+                        
+                    # For puts, delta is negative, we need to take absolute value
+                    delta = abs(float(put.get('delta', 0)))
+                    # We want OTM puts with negative delta close to target
+                    if float(put.get('strike', 0)) < current_price:
+                        delta_diff = abs(delta - target_delta)
+                        if delta_diff < best_put_delta_diff and delta_diff <= delta_range:
+                            best_put = put
+                            best_put_delta_diff = delta_diff
+                
+                # Get portfolio position data
+                position_size = 0
+                avg_cost = 0
+                market_value = 0
+                unrealized_pnl = 0
+                
+                # Check portfolio for this stock
+                portfolio_positions = conn.get_portfolio_positions()
+                for pos in portfolio_positions:
+                    if pos.contract.symbol == ticker:
+                        position_size = float(pos.position)
+                        avg_cost = float(pos.averageCost)
+                        market_value = float(pos.marketValue)
+                        unrealized_pnl = float(pos.unrealizedPNL)
+                        break
+                
+                # Calculate potential earnings
+                call_earnings = None
+                put_earnings = None
+                
+                if best_call and position_size > 0:
+                    # For covered calls (only if we own the stock)
+                    max_contracts = int(position_size // 100)  # Each contract covers 100 shares
+                    premium_per_contract = float(best_call.get('bid', 0)) * 100  # Convert to dollar amount
+                    total_premium = premium_per_contract * max_contracts
+                    return_on_capital = (total_premium / (current_price * 100 * max_contracts)) * 100 if max_contracts > 0 else 0
+                    
+                    call_earnings = {
+                        'strategy': 'Covered Call',
+                        'max_contracts': max_contracts,
+                        'premium_per_contract': premium_per_contract,
+                        'total_premium': total_premium,
+                        'return_on_capital': return_on_capital
+                    }
+                
+                if best_put:
+                    # For cash-secured puts
+                    put_strike = float(best_put.get('strike', 0))
+                    # Use a safety margin (e.g., 80% of portfolio value) for max position value
+                    portfolio_summary = conn.get_account_summary()
+                    available_cash = float(portfolio_summary.get('AvailableFunds', 0))
+                    safety_margin = 0.8  # Use only 80% of available funds
+                    max_position_value = available_cash * safety_margin
+                    
+                    max_contracts = int(max_position_value // (put_strike * 100))
+                    premium_per_contract = float(best_put.get('bid', 0)) * 100  # Convert to dollar amount
+                    total_premium = premium_per_contract * max_contracts
+                    return_on_cash = (total_premium / (put_strike * 100 * max_contracts)) * 100 if max_contracts > 0 else 0
+                    
+                    put_earnings = {
+                        'strategy': 'Cash-Secured Put',
+                        'max_contracts': max_contracts,
+                        'premium_per_contract': premium_per_contract,
+                        'total_premium': total_premium,
+                        'return_on_cash': return_on_cash
+                    }
+                
+                # Add to result
+                ticker_result = {
+                    'ticker': ticker,
+                    'price': current_price,
+                    'position': {
+                        'size': position_size,
+                        'avg_cost': avg_cost,
+                        'market_value': market_value,
+                        'unrealized_pnl': unrealized_pnl
+                    },
+                    'call': {
+                        'strike': float(best_call.get('strike', 0)) if best_call else 0,
+                        'bid': float(best_call.get('bid', 0)) if best_call else 0,
+                        'ask': float(best_call.get('ask', 0)) if best_call else 0,
+                        'delta': float(best_call.get('delta', 0)) if best_call else 0,
+                        'earnings': call_earnings
+                    },
+                    'put': {
+                        'strike': float(best_put.get('strike', 0)) if best_put else 0,
+                        'bid': float(best_put.get('bid', 0)) if best_put else 0,
+                        'ask': float(best_put.get('ask', 0)) if best_put else 0,
+                        'delta': float(best_put.get('delta', 0)) if best_put else 0,
+                        'earnings': put_earnings
+                    }
+                }
+                
+                result['data'][ticker] = ticker_result
+                
+            except Exception as e:
+                logger.error(f"Error processing delta-targeted options for {ticker}: {str(e)}")
+                continue
+                
+        return result 

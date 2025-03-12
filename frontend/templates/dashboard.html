@@ -68,6 +68,46 @@
     </div>
 </div>
 
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card shadow-sm">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Delta Targeted Options (δ ≈ 0.1)</h5>
+                <div>
+                    <button class="btn btn-sm btn-outline-primary" id="refresh-options">
+                        <i class="bi bi-arrow-repeat"></i> Refresh
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Symbol</th>
+                                <th>Price</th>
+                                <th>Position</th>
+                                <th>Sell Call</th>
+                                <th>Call Premium</th>
+                                <th>Sell Put</th>
+                                <th>Put Premium</th>
+                            </tr>
+                        </thead>
+                        <tbody id="delta-options-table">
+                            <tr>
+                                <td colspan="7" class="text-center">Loading options data...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="card-footer">
+                <small class="text-muted">Options shown have delta values around 0.1, optimal for balancing risk and reward.</small>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="row">
     <div class="col-md-12">
         <div class="card shadow-sm">
@@ -194,6 +234,67 @@
         })
         .catch(error => console.error('Error fetching recommendations:', error));
     
+    // Fetch delta-targeted options
+    function fetchDeltaTargetedOptions() {
+        const deltaOptionsTable = document.getElementById('delta-options-table');
+        deltaOptionsTable.innerHTML = '<tr><td colspan="7" class="text-center">Loading options data...</td></tr>';
+        
+        fetch('/api/options/delta-targeted')
+            .then(response => response.json())
+            .then(data => {
+                deltaOptionsTable.innerHTML = '';
+                
+                if (data.data && Object.keys(data.data).length > 0) {
+                    // Sort tickers by those with positions first, then alphabetically
+                    const tickers = Object.keys(data.data).sort((a, b) => {
+                        const posA = data.data[a].position.size;
+                        const posB = data.data[b].position.size;
+                        
+                        if (posA !== 0 && posB === 0) return -1;
+                        if (posA === 0 && posB !== 0) return 1;
+                        return a.localeCompare(b);
+                    });
+                    
+                    tickers.forEach(ticker => {
+                        const option = data.data[ticker];
+                        const row = document.createElement('tr');
+                        
+                        // Calculate call and put earnings display
+                        let callEarnings = 'N/A';
+                        let putEarnings = 'N/A';
+                        
+                        if (option.call.earnings) {
+                            const e = option.call.earnings;
+                            callEarnings = `${e.max_contracts} × ${formatCurrency(e.premium_per_contract)} = ${formatCurrency(e.total_premium)} (${e.return_on_capital.toFixed(2)}%)`;
+                        }
+                        
+                        if (option.put.earnings) {
+                            const e = option.put.earnings;
+                            putEarnings = `${e.max_contracts} × ${formatCurrency(e.premium_per_contract)} = ${formatCurrency(e.total_premium)} (${e.return_on_cash.toFixed(2)}%)`;
+                        }
+                        
+                        row.innerHTML = `
+                            <td><strong>${ticker}</strong></td>
+                            <td>${formatCurrency(option.price)}</td>
+                            <td>${option.position.size !== 0 ? option.position.size : '-'}</td>
+                            <td>${formatStrike(option.call.strike)} (δ=${option.call.delta.toFixed(2)})</td>
+                            <td>${option.call.earnings ? callEarnings : 'N/A'}</td>
+                            <td>${formatStrike(option.put.strike)} (δ=${option.put.delta.toFixed(2)})</td>
+                            <td>${option.put.earnings ? putEarnings : 'N/A'}</td>
+                        `;
+                        
+                        deltaOptionsTable.appendChild(row);
+                    });
+                } else {
+                    deltaOptionsTable.innerHTML = '<tr><td colspan="7" class="text-center">No options data available</td></tr>';
+                }
+            })
+            .catch(error => {
+                console.error('Error fetching delta-targeted options:', error);
+                deltaOptionsTable.innerHTML = '<tr><td colspan="7" class="text-center text-danger">Error loading options data</td></tr>';
+            });
+    }
+    
     // Initialize portfolio performance chart
     const ctx = document.getElementById('portfolio-chart').getContext('2d');
     const portfolioChart = new Chart(ctx, {
@@ -219,6 +320,11 @@
         }
     });
     
+    // Add refresh button handler
+    document.getElementById('refresh-options').addEventListener('click', function() {
+        fetchDeltaTargetedOptions();
+    });
+    
     // Utility functions
     function formatCurrency(value) {
         return '$' + parseFloat(value).toFixed(2).replace(/\d(?=(\d{3})+\.)/g, '$&,');
@@ -228,5 +334,13 @@
         const date = new Date(dateString);
         return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
     }
+    
+    function formatStrike(strike) {
+        if (!strike || strike === 0) return 'N/A';
+        return formatCurrency(strike);
+    }
+    
+    // Load delta-targeted options on page load
+    fetchDeltaTargetedOptions();
 </script>
 {% endblock %} 
