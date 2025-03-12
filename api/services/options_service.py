@@ -1277,11 +1277,13 @@ class OptionsService:
         Returns:
             float: Approximate delta value
         """
-        # Time to expiry in years
+        # Time to expiry in years (ensure at least 1 day to prevent division by zero)
+        days_to_expiry = max(1, days_to_expiry)
         t = days_to_expiry / 365.0
         
-        # Adjust volatility for time
-        adjusted_vol = volatility * math.sqrt(t)
+        # Adjust volatility for time (ensure minimum value to prevent division by zero)
+        volatility = max(0.01, volatility)  # Minimum 1% volatility
+        adjusted_vol = max(0.001, volatility * math.sqrt(t))  # Ensure minimum value
         
         # Base delta calculation
         if option_type == 'C':
