@@ -16,17 +16,13 @@ from datetime import datetime
 # Import ib_insync
 from ib_insync import IB, Stock, Option, Contract, util
 
+# Import our logging configuration
+from core.logging_config import get_logger
+
 # Configure logging
-logging.basicConfig(level=logging.INFO, 
-                   format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger('autotrader.connection')
+logger = get_logger('autotrader.connection', 'tws')
 
 # Set ib_insync logger to WARNING level to reduce noise
-logging.getLogger('ib_insync').setLevel(logging.WARNING)
-logging.getLogger('ib_insync.wrapper').setLevel(logging.WARNING)
-logging.getLogger('ib_insync.client').setLevel(logging.WARNING)
-logging.getLogger('ib_insync.ticker').setLevel(logging.WARNING)
-
 def suppress_ib_logs():
     """
     Suppress verbose logs from the ib_insync library by setting higher log levels
@@ -48,11 +44,8 @@ def suppress_ib_logs():
     # Suppress related lower-level modules used by ib_insync
     logging.getLogger('asyncio').setLevel(logging.WARNING)
     logging.getLogger('eventkit').setLevel(logging.WARNING)
-    
-    # Return to enable chaining if needed
-    return True
 
-# Call to suppress logs right away
+# Call to suppress IB logs
 suppress_ib_logs()
 
 
@@ -97,7 +90,7 @@ class IBConnection:
                 logger.info(f"Already connected to IB")
                 return True
             
-            logger.info(f"Connecting to IB at {self.host}:{self.port}")
+            logger.info(f"Connecting to IB at {self.host}:{self.port} with client ID {self.client_id}")
             
             # Set read-only mode if requested
             if self.readonly:
@@ -109,13 +102,22 @@ class IBConnection:
             
             self._connected = self.ib.isConnected()
             if self._connected:
-                logger.info(f"Successfully connected to IB")
+                logger.info(f"Successfully connected to IB with client ID {self.client_id}")
                 return True
             else:
-                logger.error(f"Failed to connect to IB")
+                logger.error(f"Failed to connect to IB with client ID {self.client_id}")
                 return False
         except Exception as e:
-            logger.error(f"Error connecting to IB: {str(e)}")
+            error_msg = str(e)
+            if "clientId" in error_msg and "already in use" in error_msg:
+                logger.error(f"Connection error: Client ID {self.client_id} is already in use by another application.")
+                logger.error("Please try using a different client ID, or close other applications connected to TWS/IB Gateway.")
+            else:
+                logger.error(f"Error connecting to IB: {error_msg}")
+                # Log more detailed error information for debugging
+                logger.error(f"Connection details: host={self.host}, port={self.port}, clientId={self.client_id}, readonly={self.readonly}")
+                logger.debug(traceback.format_exc())
+            
             self._connected = False
             return False
     
@@ -980,3 +982,79 @@ class IBConnection:
     def get_option_price(self, option_contract):
         """Get price for a specific option contract"""
         # ... existing code ... 
+
+    def get_stock_data(self, symbol):
+        """
+        Get comprehensive stock data including price, volume, and other metrics
+        
+        Args:
+            symbol (str): Stock symbol
+            
+        Returns:
+            dict: Dictionary with stock data or None if error
+        """
+        if not self.is_connected():
+            logger.warning("Not connected to IB. Attempting to connect...")
+            if not self.connect():
+                return None
+        
+        try:
+            # Create a stock contract
+            contract = Contract(symbol=symbol, secType='STK', exchange='SMART', currency='USD')
+            
+            # Qualify the contract
+            qualified_contracts = self.ib.qualifyContracts(contract)
+            if not qualified_contracts:
+                logger.error(f"Failed to qualify contract for {symbol}")
+                return None
+            
+            qualified_contract = qualified_contracts[0]
+            
+            # Request market data
+            ticker = self.ib.reqMktData(qualified_contract)
+            
+            # Wait for market data to be received
+            wait_time = 5  # seconds
+            self.ib.sleep(wait_time)
+            
+            # Get price data
+            last_price = ticker.last if ticker.last else (ticker.close if ticker.close else None)
+            bid_price = ticker.bid if ticker.bid else None
+            ask_price = ticker.ask if ticker.ask else None
+            last_rth_trade = ticker.lastRTHTrade.price if hasattr(ticker, 'lastRTHTrade') and ticker.lastRTHTrade else None
+            
+            # If no last price is available, check other prices
+            if last_price is None:
+                if bid_price and ask_price:
+                    # Use midpoint of bid-ask spread
+                    last_price = (bid_price + ask_price) / 2
+                elif bid_price:
+                    last_price = bid_price
+                elif ask_price:
+                    last_price = ask_price
+                elif last_rth_trade:
+                    last_price = last_rth_trade
+            
+            # Cancel the market data subscription
+            self.ib.cancelMktData(qualified_contract)
+            
+            # Build and return the result
+            result = {
+                'symbol': symbol,
+                'last': last_price,
+                'bid': bid_price,
+                'ask': ask_price,
+                'high': ticker.high,
+                'low': ticker.low,
+                'close': ticker.close,
+                'open': ticker.open,
+                'volume': ticker.volume,
+                'halted': ticker.halted if hasattr(ticker, 'halted') else False,
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            return result
+        
+        except Exception as e:
+            logger.error(f"Error getting stock data for {symbol}: {str(e)}")
+            return None 

@@ -5,6 +5,8 @@ Handles options data retrieval and processing
 
 import logging
 import math
+import random
+import time
 from datetime import datetime, timedelta
 import pandas as pd
 from core.connection import IBConnection, Option
@@ -28,14 +30,60 @@ class OptionsService:
         Ensure that the IB connection exists and is connected
         """
         if self.connection is None or not self.connection.is_connected():
+            # Generate a unique client ID based on current timestamp and random number
+            # to avoid conflicts with other connections
+            unique_client_id = int(time.time() % 10000) + random.randint(1000, 9999)
+            logger.info(f"Creating new TWS connection with client ID: {unique_client_id}")
+            
             self.connection = IBConnection(
                 host=self.config.get('host', '127.0.0.1'),
                 port=self.config.get('port', 7497),
-                client_id=self.config.get('client_id', 1),
+                client_id=unique_client_id,  # Use the unique client ID instead of fixed ID 1
+                timeout=self.config.get('timeout', 20),
                 readonly=self.config.get('readonly', True)
             )
             self.connection.connect()
         return self.connection
+        
+    def _get_stock_data(self, ticker):
+        """
+        Custom implementation to get stock data directly as a workaround
+        for missing get_stock_data method in IBConnection
+        
+        Args:
+            ticker (str): Stock ticker symbol
+            
+        Returns:
+            dict: Stock data dictionary
+        """
+        conn = self._ensure_connection()
+        
+        try:
+            # We can use get_stock_price which we know exists
+            stock_price = conn.get_stock_price(ticker)
+            
+            # Build a basic stock data object
+            stock_data = {
+                'symbol': ticker,
+                'last': stock_price,
+                'price': stock_price,
+                'bid': None,
+                'ask': None,
+                'high': None,
+                'low': None,
+                'close': stock_price,
+                'open': None,
+                'volume': None,
+                'timestamp': datetime.now().isoformat()
+            }
+            return stock_data
+        except Exception as e:
+            logger.error(f"Error getting stock data for {ticker}: {str(e)}")
+            return {
+                'symbol': ticker,
+                'last': 0,
+                'price': 0
+            }
         
     def get_options_data(self, ticker, expiration=None, strikes=10, interval=5, monthly=False):
         """
@@ -54,7 +102,8 @@ class OptionsService:
         conn = self._ensure_connection()
         
         # Get stock data
-        stock_data = conn.get_stock_data(ticker)
+        # Using our custom method instead of conn.get_stock_data
+        stock_data = self._get_stock_data(ticker)
         current_price = stock_data.get('last', 0)
         
         # Determine expiration date if not provided

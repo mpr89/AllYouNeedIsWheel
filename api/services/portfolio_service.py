@@ -4,6 +4,8 @@ Manages portfolio data and calculations
 """
 
 import logging
+import random
+import time
 from core.connection import IBConnection
 from core.utils import print_stock_summary
 from config import Config
@@ -23,10 +25,16 @@ class PortfolioService:
         Ensure that the IB connection exists and is connected
         """
         if self.connection is None or not self.connection.is_connected():
+            # Generate a unique client ID based on current timestamp and random number
+            # to avoid conflicts with other connections
+            unique_client_id = int(time.time() % 10000) + random.randint(1000, 9999)
+            logger.info(f"Creating new TWS connection with client ID: {unique_client_id}")
+            
             self.connection = IBConnection(
                 host=self.config.get('host', '127.0.0.1'),
                 port=self.config.get('port', 7497),
-                client_id=self.config.get('client_id', 1),
+                client_id=unique_client_id,  # Use the unique client ID instead of fixed ID 1
+                timeout=self.config.get('timeout', 20),
                 readonly=self.config.get('readonly', True)
             )
             self.connection.connect()

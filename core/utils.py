@@ -38,6 +38,7 @@ def rotate_logs(logs_dir='logs', max_logs=5):
         except Exception as e:
             print(f"Error deleting log file {log_file}: {e}")
 
+def rotate_reports(reports_dir='reports', max_reports=5):
     """
     Rotate HTML report files, keeping only the specified number of most recent reports.
     

@@ -6,18 +6,14 @@ Script to start the Auto-Trader API server using gunicorn
 
 import os
 import sys
-import logging
 from dotenv import load_dotenv
+from core.logging_config import get_logger
 
 # Load environment variables from .env file
 load_dotenv()
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger('autotrader.server')
+logger = get_logger('autotrader.server', 'server')
 
 def main():
     """
