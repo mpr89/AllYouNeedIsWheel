@@ -21,18 +21,12 @@ def get_recommendations():
             
         strategy = request.args.get('strategy', 'simple')
         expiration = request.args.get('expiration', None)
-        strikes = request.args.get('strikes', 10, type=int)
-        interval = request.args.get('interval', 5, type=int)
-        monthly = request.args.get('monthly', False, type=bool)
         
         # Get recommendations
         results = options_service.get_recommendations(
             tickers=tickers,
             strategy=strategy,
-            expiration=expiration,
-            strikes=strikes,
-            interval=interval,
-            monthly=monthly
+            expiration=expiration
         )
         return jsonify(results)
     except Exception as e:

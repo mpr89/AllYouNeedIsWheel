@@ -97,114 +97,124 @@ class OptionsService:
                 'price': 0
             }
         
-    def get_options_data(self, ticker, expiration=None, strikes=10, interval=5, monthly=False):
+    def get_options_data(self, ticker, expiration=None):
         """
         Get options data for a specific ticker
         
         Args:
-            ticker (str): Stock ticker symbol
-            expiration (str, optional): Option expiration date (format: YYYYMMDD). Defaults to None.
-            strikes (int, optional): Number of strikes around current price. Defaults to 10.
-            interval (int, optional): Interval between strikes in dollars or percentage. Defaults to 5.
-            monthly (bool, optional): Whether to use monthly expirations only. Defaults to False.
+            ticker: Stock ticker
+            expiration: Option expiration date (optional)
             
         Returns:
-            dict: Dictionary with options data
+            dict: Options data
         """
-        logger.info(f"Getting options data for {ticker}")
-        
-        # Get connection to IB
-        conn = self._ensure_connection()
-        if conn is None:
-            logger.error("Failed to establish connection to TWS/IB Gateway")
-            return {
-                "error": "Failed to connect to TWS/IB Gateway. Please make sure it's running and properly configured.",
-                "status": "error",
-                "ticker": ticker
-            }
-        
         try:
-            # Get stock data
+            logger.info(f"Getting options data for {ticker}")
+            
+            # Ensure connection to IB
+            conn = self._ensure_connection()
+            if not conn:
+                return {"error": "Failed to connect to Interactive Brokers"}
+            
+            # Get stock data using our custom method
             stock_data = self._get_stock_data(ticker)
-            if stock_data is None:
-                logger.error(f"Failed to get stock data for {ticker}")
-                return {
-                    "error": f"Failed to get stock data for {ticker}",
-                    "status": "error",
-                    "ticker": ticker
-                }
+            if not stock_data:
+                return {"error": f"Failed to get stock data for {ticker}"}
             
-            current_price = stock_data.get('last', 0)
+            # Get expiration dates
+            try:
+                expirations = conn.get_expiration_dates(ticker)
+                if not expirations:
+                    return {"error": f"No option expiration dates found for {ticker}"}
+                    
+                selected_expiration = expiration or expirations[0]
+                if selected_expiration not in expirations:
+                    logger.warning(f"Requested expiration {expiration} not found. Using {expirations[0]} instead.")
+                    selected_expiration = expirations[0]
+                    
+            except Exception as e:
+                logger.error(f"Error getting option expiration dates: {e}")
+                return {"error": f"Failed to get option expiration dates: {str(e)}"}
             
-            # Determine expiration date if not provided
-            if expiration is None:
-                if monthly:
-                    expiration = get_next_monthly_expiration()
-                else:
-                    expiration = get_closest_friday()
-                expiration = expiration.strftime('%Y%m%d')
+            # Get strike prices
+            try:
+                strikes = conn.get_strike_prices(ticker, selected_expiration)
+                if not strikes:
+                    return {"error": f"No strike prices found for {ticker} on {selected_expiration}"}
+            except Exception as e:
+                logger.error(f"Error getting option strike prices: {e}")
+                return {"error": f"Failed to get option strike prices: {str(e)}"}
             
             # Get options chain
-            options_chain = conn.get_options_chain(
-                ticker, 
-                expiration=expiration,
-                strikes=strikes,
-                interval=interval
-            )
+            options_data = []
+            has_real_time_data = False
+            has_historical_data = False
             
-            # Extract calls and puts
-            calls = []
-            puts = []
+            # Find ATM strike (closest to current stock price)
+            stock_price = stock_data.get('last', 0)
+            atm_strike = min(strikes, key=lambda x: abs(x - stock_price))
             
-            for call in options_chain.get('calls', []):
-                call_data = {
-                    'strike': float(call.get('strike', 0)),
-                    'last_price': float(call.get('last', 0)),
-                    'bid': float(call.get('bid', 0)),
-                    'ask': float(call.get('ask', 0)),
-                    'implied_volatility': float(call.get('impliedVol', 0)),
-                    'delta': float(call.get('delta', 0)),
-                    'gamma': float(call.get('gamma', 0)),
-                    'vega': float(call.get('vega', 0)),
-                    'theta': float(call.get('theta', 0)),
-                    'open_interest': int(call.get('openInterest', 0)),
-                    'volume': int(call.get('volume', 0)),
-                }
-                calls.append(call_data)
+            # Get a few strikes above and below ATM
+            relevant_strikes = []
+            for strike in strikes:
+                if abs(strike - atm_strike) <= 20:  # Get strikes within $20 of ATM
+                    relevant_strikes.append(strike)
+            
+            if not relevant_strikes:
+                relevant_strikes = strikes[:5] if strikes else []
+            
+            # First try to get real-time data
+            for strike in relevant_strikes:
+                # Try call option
+                call_data = conn.get_option_data(ticker, selected_expiration, 'C', strike)
+                if call_data:
+                    options_data.append(call_data)
+                    has_real_time_data = True
                 
-            for put in options_chain.get('puts', []):
-                put_data = {
-                    'strike': float(put.get('strike', 0)),
-                    'last_price': float(put.get('last', 0)),
-                    'bid': float(put.get('bid', 0)),
-                    'ask': float(put.get('ask', 0)),
-                    'implied_volatility': float(put.get('impliedVol', 0)),
-                    'delta': float(put.get('delta', 0)),
-                    'gamma': float(put.get('gamma', 0)),
-                    'vega': float(put.get('vega', 0)),
-                    'theta': float(put.get('theta', 0)),
-                    'open_interest': int(put.get('openInterest', 0)),
-                    'volume': int(put.get('volume', 0)),
-                }
-                puts.append(put_data)
+                # Try put option
+                put_data = conn.get_option_data(ticker, selected_expiration, 'P', strike)
+                if put_data:
+                    options_data.append(put_data)
+                    has_real_time_data = True
             
-            # Prepare response
+            # If no real-time data, try historical data as fallback
+            if not has_real_time_data:
+                logger.warning(f"No real-time options data available for {ticker}. Trying historical data...")
+                
+                for strike in relevant_strikes:
+                    # Try call option (historical)
+                    call_data = conn.get_historical_option_data(ticker, selected_expiration, 'C', strike)
+                    if call_data:
+                        options_data.append(call_data)
+                        has_historical_data = True
+                    
+                    # Try put option (historical)
+                    put_data = conn.get_historical_option_data(ticker, selected_expiration, 'P', strike)
+                    if put_data:
+                        options_data.append(put_data)
+                        has_historical_data = True
+            
+            if not options_data:
+                if not has_real_time_data and not has_historical_data:
+                    return {"error": f"No options data available for {ticker}"}
+            
+            # Process and return the data
             result = {
-                'ticker': ticker,
-                'current_price': current_price,
-                'expiration': expiration,
-                'calls': calls,
-                'puts': puts,
+                "ticker": ticker,
+                "stock_data": stock_data,
+                "expiration": selected_expiration,
+                "expirations": expirations,
+                "options": options_data,
+                "using_historical_data": not has_real_time_data and has_historical_data
             }
             
+            logger.info(f"Successfully retrieved options data for {ticker}")
             return result
+            
         except Exception as e:
-            logger.error(f"Error getting options data for {ticker}: {str(e)}")
-            return {
-                "error": f"Error getting options data for {ticker}: {str(e)}",
-                "status": "error",
-                "ticker": ticker
-            }
+            logger.error(f"Error getting options data: {e}")
+            logger.debug(traceback.format_exc())
+            return {"error": f"Failed to get options data: {str(e)}"}
     
     def get_option_chain(self, ticker, expiration=None):
         """
@@ -268,8 +278,7 @@ class OptionsService:
             'expirations': formatted_expirations
         }
     
-    def get_recommendations(self, tickers=None, strategy='simple', expiration=None, 
-                           strikes=10, interval=5, monthly=False):
+    def get_recommendations(self, tickers=None, strategy='simple', expiration=None):
         """
         Get option trade recommendations based on strategy
         
@@ -277,9 +286,6 @@ class OptionsService:
             tickers (list, optional): List of ticker symbols
             strategy (str, optional): Strategy name
             expiration (str, optional): Expiration date (YYYYMMDD format)
-            strikes (int, optional): Number of strikes to include
-            interval (int, optional): Strike price interval
-            monthly (bool, optional): Whether to use monthly expiration
             
         Returns:
             dict: Option recommendations
@@ -292,18 +298,10 @@ class OptionsService:
             tickers = [pos.contract.symbol for pos in portfolio
                       if pos.contract.secType == 'STK']
         
-        # Determine expiration date if not provided
-        if expiration is None:
-            if monthly:
-                expiration = get_next_monthly_expiration()
-            else:
-                expiration = get_closest_friday()
-            expiration = expiration.strftime('%Y%m%d')
-            
         # Apply strategy to get recommendations
         if strategy == 'simple':
             recommendations = self._generate_simple_options_recommendations(
-                tickers, expiration, strikes, interval
+                tickers, expiration
             )
         else:
             # Unsupported strategy
@@ -319,15 +317,13 @@ class OptionsService:
             'recommendations': recommendations
         }
         
-    def _generate_simple_options_recommendations(self, tickers, expiration, strikes=10, interval=5):
+    def _generate_simple_options_recommendations(self, tickers, expiration):
         """
         Generate recommendations using the simple options strategy
         
         Args:
             tickers (list): List of ticker symbols
             expiration (str): Expiration date in YYYYMMDD format
-            strikes (int): Number of strikes to include
-            interval (int): Strike price interval
             
         Returns:
             list: List of recommendation dictionaries
@@ -350,7 +346,13 @@ class OptionsService:
         
         # Get all stock prices in one request
         logger.info(f"Fetching stock prices for tickers: {tickers}")
-        stock_prices = conn.get_multiple_stock_prices(tickers)
+        stock_prices = {}
+        
+        # Get stock data for each ticker
+        for ticker in tickers:
+            stock_data = self._get_stock_data(ticker)
+            if stock_data and 'last' in stock_data:
+                stock_prices[ticker] = stock_data['last']
         
         if not stock_prices:
             logger.error("Failed to get stock prices")
@@ -369,24 +371,14 @@ class OptionsService:
                 continue
                 
             # Calculate option strike prices at specified percentages
-            put_strike = self._adjust_to_standard_strike(price * (1 - put_otm_pct/100))
-            call_strike = self._adjust_to_standard_strike(price * (1 + call_otm_pct/100))
+            put_strike = conn._adjust_to_standard_strike(price * (1 - put_otm_pct/100))
+            call_strike = conn._adjust_to_standard_strike(price * (1 + call_otm_pct/100))
             
             strikes_map[ticker] = [put_strike, call_strike]
             valid_tickers.append(ticker)
         
-        # Get option prices for all tickers and strikes
-        all_option_data = conn.get_multiple_stocks_option_prices(
-            valid_tickers, 
-            expiration, 
-            strikes_map=strikes_map
-        )
-        
-        # Process each ticker with the data we've gathered
+        # Process each ticker
         for ticker in valid_tickers:
-            if ticker not in stock_prices:
-                continue
-                
             try:
                 stock_price = stock_prices[ticker]
                 
@@ -408,28 +400,14 @@ class OptionsService:
                     market_value = portfolio[ticker]['market_value']
                     unrealized_pnl = portfolio[ticker]['unrealized_pnl']
                 
-                # Get options data
-                put_data = None
-                call_data = None
-                
-                if ticker in all_option_data:
-                    ticker_options = all_option_data[ticker]
-                    for option_key, option_data in ticker_options.items():
-                        # Option key is a tuple of (strike, right)
-                        strike, right = option_key
-                        if right == 'P' and abs(strike - put_strike) < 0.01:
-                            put_data = option_data
-                        elif right == 'C' and abs(strike - call_strike) < 0.01:
-                            call_data = option_data
-                
-                # If options data not found in bulk, try individual requests
-                if put_data is None:
-                    put_contract = conn.create_option_contract(ticker, expiration, put_strike, 'P')
-                    put_data = conn.get_option_price(put_contract)
-                
-                if call_data is None:
-                    call_contract = conn.create_option_contract(ticker, expiration, call_strike, 'C')
-                    call_data = conn.get_option_price(call_contract)
+                # Get options data (either real-time or historical)
+                put_data = conn.get_option_data(ticker, expiration, 'P', put_strike)
+                if not put_data:
+                    put_data = conn.get_historical_option_data(ticker, expiration, 'P', put_strike)
+                    
+                call_data = conn.get_option_data(ticker, expiration, 'C', call_strike)
+                if not call_data:
+                    call_data = conn.get_historical_option_data(ticker, expiration, 'C', call_strike)
                 
                 # Determine strategy based on position
                 strategy = "NEUTRAL"  # Default strategy
@@ -530,13 +508,15 @@ class OptionsService:
                             'strike': put_strike,
                             'bid': put_data['bid'] if put_data and 'bid' in put_data else None,
                             'ask': put_data['ask'] if put_data and 'ask' in put_data else None,
-                            'last': put_data['last'] if put_data and 'last' in put_data else None
+                            'last': put_data['last'] if put_data and 'last' in put_data else None,
+                            'is_historical': put_data.get('is_historical', False) if put_data else False
                         },
                         'call': {
                             'strike': call_strike,
                             'bid': call_data['bid'] if call_data and 'bid' in call_data else None,
                             'ask': call_data['ask'] if call_data and 'ask' in call_data else None,
-                            'last': call_data['last'] if call_data and 'last' in call_data else None
+                            'last': call_data['last'] if call_data and 'last' in call_data else None,
+                            'is_historical': call_data.get('is_historical', False) if call_data else False
                         }
                     },
                     'recommendation': recommendation

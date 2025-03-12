@@ -19,16 +19,10 @@ def get_options():
             return jsonify({'error': 'Ticker symbol is required'}), 400
             
         expiration = request.args.get('expiration')
-        strikes = request.args.get('strikes', 10, type=int)
-        interval = request.args.get('interval', 5, type=int)
-        monthly = request.args.get('monthly', False, type=bool)
         
         results = options_service.get_options_data(
             ticker, 
-            expiration=expiration,
-            strikes=strikes,
-            interval=interval,
-            monthly=monthly
+            expiration=expiration
         )
         return jsonify(results)
     except Exception as e:

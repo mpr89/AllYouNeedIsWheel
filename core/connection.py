@@ -1020,6 +1020,98 @@ class IBConnection:
         """Get price for a specific option contract"""
         # ... existing code ... 
 
+    def get_historical_data(self, symbol, duration='1 D', bar_size='1 day', what_to_show='TRADES', use_rth=True):
+        """
+        Get historical data for a stock
+        
+        Args:
+            symbol (str): Stock symbol
+            duration (str): Time duration (e.g., '1 D', '1 W', '1 M')
+            bar_size (str): Size of bars (e.g., '1 day', '1 hour', '15 mins')
+            what_to_show (str): Type of data to show
+            use_rth (bool): Whether to use regular trading hours only
+            
+        Returns:
+            dict: Historical data or None if error
+        """
+        if not self.is_connected():
+            logger.warning("Not connected to IB. Attempting to connect...")
+            if not self.connect():
+                return None
+        
+        try:
+            # Ensure event loop exists for this thread
+            self._ensure_event_loop()
+            
+            # Create a stock contract
+            contract = Contract(symbol=symbol, secType='STK', exchange='SMART', currency='USD')
+            
+            # Qualify the contract
+            qualified_contracts = self.ib.qualifyContracts(contract)
+            if not qualified_contracts:
+                logger.error(f"Failed to qualify contract for {symbol}")
+                return None
+            
+            qualified_contract = qualified_contracts[0]
+            
+            # Get end time (current time if market closed, or previous close if needed)
+            end_time = ''  # Empty string means current time
+            
+            # Request historical data
+            logger.info(f"Getting historical data for {symbol} for duration {duration}")
+            
+            bars = self.ib.reqHistoricalData(
+                qualified_contract,
+                endDateTime=end_time,
+                durationStr=duration,
+                barSizeSetting=bar_size,
+                whatToShow=what_to_show,
+                useRTH=use_rth,
+                formatDate=1
+            )
+            
+            if not bars:
+                logger.warning(f"No historical data available for {symbol}")
+                return None
+            
+            # Get the latest bar
+            latest_bar = bars[-1]
+            
+            # Build and return the result
+            result = {
+                'symbol': symbol,
+                'last': latest_bar.close,
+                'bid': latest_bar.close,  # Use close price as a substitute
+                'ask': latest_bar.close,  # Use close price as a substitute
+                'high': latest_bar.high,
+                'low': latest_bar.low,
+                'close': latest_bar.close,
+                'open': latest_bar.open,
+                'volume': latest_bar.volume,
+                'halted': False,
+                'timestamp': latest_bar.date.isoformat(),
+                'is_historical': True  # Flag to indicate this is historical data
+            }
+            
+            logger.info(f"Successfully retrieved historical data for {symbol} (close: {latest_bar.close})")
+            return result
+            
+        except Exception as e:
+            error_msg = str(e)
+            if "There is no current event loop" in error_msg:
+                logger.error("Asyncio event loop error in get_historical_data. Retrying with new event loop.")
+                try:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    return self.get_historical_data(symbol, duration, bar_size, what_to_show, use_rth)
+                except Exception as retry_error:
+                    logger.error(f"Failed to get historical data after event loop retry: {str(retry_error)}")
+                    return None
+            else:
+                logger.error(f"Error getting historical data for {symbol}: {error_msg}")
+                logger.debug(traceback.format_exc())
+                return None
+                
     def get_stock_data(self, symbol):
         """
         Get comprehensive stock data including price, volume, and other metrics
@@ -1078,6 +1170,17 @@ class IBConnection:
             # Cancel the market data subscription
             self.ib.cancelMktData(qualified_contract)
             
+            # If we couldn't get any real-time data, try historical data
+            if last_price is None:
+                logger.warning(f"Could not get real-time price for {symbol}, trying historical data...")
+                historical_data = self.get_historical_data(symbol)
+                if historical_data:
+                    logger.info(f"Using historical data for {symbol}")
+                    return historical_data
+                else:
+                    logger.error(f"Could not get any data for {symbol}")
+                    return None
+            
             # Build and return the result
             result = {
                 'symbol': symbol,
@@ -1090,7 +1193,8 @@ class IBConnection:
                 'open': ticker.open,
                 'volume': ticker.volume,
                 'halted': ticker.halted if hasattr(ticker, 'halted') else False,
-                'timestamp': datetime.now().isoformat()
+                'timestamp': datetime.now().isoformat(),
+                'is_historical': False  # This is real-time data
             }
             
             return result
@@ -1109,4 +1213,129 @@ class IBConnection:
                     return None
             else:
                 logger.error(f"Error getting stock data for {symbol}: {error_msg}")
-                return None 
+                return None
+
+    def get_historical_option_data(self, symbol, expiration, right='C', strike=None, duration='1 D', bar_size='1 day'):
+        """
+        Get historical data for options
+        
+        Args:
+            symbol (str): Stock symbol
+            expiration (str): Option expiration date in format YYYYMMDD
+            right (str): Option right ('C' for call, 'P' for put)
+            strike (float): Strike price (if None, will get data for ATM option)
+            duration (str): Time duration (e.g., '1 D', '1 W', '1 M')
+            bar_size (str): Size of bars (e.g., '1 day', '1 hour', '15 mins')
+            
+        Returns:
+            dict: Historical options data or None if error
+        """
+        if not self.is_connected():
+            logger.warning("Not connected to IB. Attempting to connect...")
+            if not self.connect():
+                return None
+                
+        try:
+            # Ensure event loop exists for this thread
+            self._ensure_event_loop()
+            
+            # If no strike provided, get current stock price and find ATM strike
+            if strike is None:
+                # Get stock data (which may itself use historical data)
+                stock_data = self.get_stock_data(symbol)
+                if not stock_data:
+                    logger.error(f"Could not get stock data for {symbol}")
+                    return None
+                
+                stock_price = stock_data.get('last')
+                
+                # Find the closest standard strike to the current price
+                strike = self._adjust_to_standard_strike(stock_price)
+                logger.info(f"Using closest strike {strike} to current price {stock_price}")
+            
+            # Create the option contract
+            option = Option(symbol, expiration, strike, right, 'SMART', '100', 'USD')
+            
+            # Try to qualify the contract
+            try:
+                qualified_contracts = self.ib.qualifyContracts(option)
+                if not qualified_contracts:
+                    logger.error(f"Could not qualify option contract: {symbol} {expiration} {strike} {right}")
+                    return None
+                    
+                qualified_contract = qualified_contracts[0]
+            except Exception as e:
+                logger.error(f"Error qualifying option contract: {e}")
+                return None
+            
+            # Request historical data
+            logger.info(f"Getting historical data for option {symbol} {expiration} {strike} {right}")
+            
+            # Empty string for endDateTime means current time
+            bars = self.ib.reqHistoricalData(
+                qualified_contract,
+                endDateTime='',
+                durationStr=duration,
+                barSizeSetting=bar_size,
+                whatToShow='TRADES',
+                useRTH=True,
+                formatDate=1
+            )
+            
+            if not bars or len(bars) == 0:
+                logger.warning(f"No historical data available for option {symbol} {expiration} {strike} {right}")
+                return None
+                
+            # Get the latest bar
+            latest_bar = bars[-1]
+            
+            # Create option data
+            option_data = {
+                'symbol': symbol,
+                'expiration': expiration,
+                'strike': strike,
+                'right': right,
+                'bid': latest_bar.close * 0.95,  # Estimate
+                'ask': latest_bar.close * 1.05,  # Estimate
+                'last': latest_bar.close,
+                'volume': latest_bar.volume,
+                'open_interest': 0,  # Not available in historical data
+                'underlying': None,  # Not available in historical data
+                'delta': None,       # Not available in historical data
+                'gamma': None,       # Not available in historical data
+                'theta': None,       # Not available in historical data
+                'vega': None,        # Not available in historical data
+                'is_historical': True,
+                'timestamp': latest_bar.date.isoformat()
+            }
+            
+            logger.info(f"Successfully retrieved historical data for option {symbol} {expiration} {strike} {right}")
+            return option_data
+            
+        except Exception as e:
+            logger.error(f"Error getting historical option data: {e}")
+            logger.debug(traceback.format_exc())
+            return None
+            
+    def _adjust_to_standard_strike(self, strike):
+        """
+        Adjust a strike price to a standard option strike increment
+        
+        Args:
+            strike: Strike price
+            
+        Returns:
+            float: Adjusted strike price
+        """
+        if strike <= 5:
+            # $0.50 increments for stocks under $5
+            return round(strike * 2) / 2
+        elif strike <= 25:
+            # $1.00 increments for stocks under $25
+            return round(strike)
+        elif strike <= 200:
+            # $5.00 increments for stocks under $200
+            return round(strike / 5) * 5
+        else:
+            # $10.00 increments for stocks over $200
+            return round(strike / 10) * 10 
