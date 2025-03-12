@@ -872,16 +872,21 @@ class OptionsService:
             ValueError: If no suitable options found during market hours
             ConnectionError: If connection fails during market hours
         """
+        start_time = time.time()
+        logger.info(f"Starting delta-targeted options request for target delta {target_delta}")
+        
         conn = self._ensure_connection()
         is_market_open = conn._is_market_hours()
         
+        # Get portfolio data once at the beginning
+        portfolio_data = conn.get_portfolio()  # This will raise during market hours if no data
+        positions = portfolio_data.get('positions', {})
+        
         # If no tickers provided, get them from portfolio
         if tickers is None:
-            portfolio_data = conn.get_portfolio()  # This will raise during market hours if no data
-            positions = portfolio_data.get('positions', {})
             tickers = [symbol for symbol, pos in positions.items() 
                       if isinstance(pos, dict) and pos.get('security_type', 'STK') == 'STK']
-        
+            
         # Determine expiration date if not provided
         if expiration is None:
             if monthly:
@@ -889,7 +894,83 @@ class OptionsService:
             else:
                 expiration_date = get_closest_friday()
             expiration = expiration_date.strftime('%Y%m%d')
+        
+        # Get all stock prices in bulk
+        logger.info(f"Fetching stock data for {len(tickers)} tickers in bulk")
+        stock_prices = conn.get_multiple_stock_prices(tickers)
+        
+        # Filter out tickers with invalid prices for market hours
+        valid_tickers = []
+        for ticker in tickers:
+            if ticker not in stock_prices or stock_prices[ticker] is None:
+                if is_market_open:
+                    logger.error(f"Invalid stock price for {ticker} during market hours")
+                    raise ValueError(f"Invalid stock price for {ticker} during market hours")
+                else:
+                    logger.info(f"Invalid stock price for {ticker} during closed market, skipping")
+                    continue
+            valid_tickers.append(ticker)
+        
+        if not valid_tickers:
+            if is_market_open:
+                raise ValueError("No valid stock prices during market hours")
+            else:
+                logger.info("No valid stock prices during closed market")
+                return {'expiration': expiration, 'target_delta': target_delta, 'data': {}}
+        
+        # Calculate strikes based on target delta for each ticker
+        strikes_map = {}
+        for ticker in valid_tickers:
+            current_price = stock_prices[ticker]
             
+            # For delta-targeted strikes, we need to calculate strikes around current price
+            if current_price < 25:
+                increment = 1.0
+                num_strikes = 10
+            elif current_price < 100:
+                increment = 2.5
+                num_strikes = 15
+            elif current_price < 250:
+                increment = 5.0
+                num_strikes = 20
+            else:
+                increment = 10.0
+                num_strikes = 25
+            
+            # Calculate a range of strikes around the current price
+            strikes = []
+            base_strike = self._adjust_to_standard_strike(current_price)
+            for i in range(-(num_strikes//2), (num_strikes//2) + 1):
+                strike = round(base_strike + (i * increment), 2)
+                if strike > 0:
+                    strikes.append(strike)
+            
+            strikes_map[ticker] = strikes
+            
+        # Get options data for all stocks in bulk
+        logger.info(f"Fetching options data for {len(valid_tickers)} tickers with expiration {expiration} in bulk")
+        rights = ['C', 'P']  # Both calls and puts
+        
+        try:
+            # Get all option prices in one batch request
+            options_data = conn.get_multiple_stocks_option_prices(
+                valid_tickers, 
+                expiration, 
+                strikes_map=strikes_map,
+                rights=rights
+            )
+        except Exception as e:
+            if is_market_open:
+                logger.error(f"Error getting options data during market hours: {str(e)}")
+                raise
+            else:
+                logger.info(f"Error getting options data during closed market, falling back to individual requests")
+                options_data = {}
+                
+        # Check if we got valid options data
+        if not options_data and is_market_open:
+            raise ValueError("No options data available during market hours")
+        
         # Prepare result structure
         result = {
             'expiration': expiration,
@@ -898,41 +979,77 @@ class OptionsService:
         }
             
         # Process each ticker
-        for ticker in tickers:
+        for ticker in valid_tickers:
             try:
-                # Get stock data (will raise during market hours if no data)
-                stock_data = self._get_stock_data(ticker)
-                current_price = stock_data.get('last', 0)
-                
+                current_price = stock_prices[ticker]
                 if current_price == 0:
                     if is_market_open:
                         raise ValueError(f"Invalid stock price (0) for {ticker} during market hours")
                     else:
-                        logger.info(f"Invalid stock price for {ticker} during closed market. Using mock data.")
+                        logger.info(f"Invalid stock price for {ticker} during closed market. Skipping.")
                         continue
                 
-                # Try to get option chain
-                option_chain = None
-                try:
-                    option_chain = conn.get_option_chain(ticker, expiration)
-                except Exception as e:
-                    if is_market_open:
-                        logger.error(f"Error getting option chain for {ticker} during market hours: {str(e)}")
-                        raise
-                    else:
-                        logger.info(f"Error getting option chain for {ticker} during closed market. Using mock data.")
+                # Convert stock price to stock data structure for compatibility
+                stock_data = {
+                    'symbol': ticker,
+                    'last': current_price,
+                    'price': current_price,
+                    'timestamp': datetime.now().isoformat(),
+                }
                 
-                # Process option chain
-                if not option_chain or 'calls' not in option_chain or 'puts' not in option_chain:
+                # Get option data for this ticker
+                ticker_options = options_data.get(ticker, {})
+                
+                # Prepare calls and puts
+                calls = []
+                puts = []
+                
+                if ticker_options:
+                    # Process the ticker options from bulk request
+                    for (strike, right), option_data in ticker_options.items():
+                        option_dict = {
+                            'symbol': ticker,
+                            'expiration': expiration,
+                            'strike': strike,
+                            'right': right,
+                            'bid': option_data.get('bid', 0),
+                            'ask': option_data.get('ask', 0),
+                            'last': option_data.get('last', 0),
+                            'is_mock': False
+                        }
+                        
+                        # Calculate delta if not provided
+                        if right == 'C':  # Call
+                            # Delta decreases as strike increases (from ~1.0 ATM to ~0.0 far OTM)
+                            delta = max(0.01, min(0.99, 0.5 - (strike - current_price) / (current_price * 0.2)))
+                            option_dict['delta'] = round(delta, 3)
+                            calls.append(option_dict)
+                        else:  # Put
+                            # Put delta increases as strike decreases (from ~-1.0 ATM to ~0.0 far OTM)
+                            delta = max(-0.99, min(-0.01, -0.5 + (strike - current_price) / (current_price * 0.2)))
+                            option_dict['delta'] = round(delta, 3)
+                            puts.append(option_dict)
+                
+                # If no option data from bulk request, fall back to individual request or mock
+                if (not calls or not puts):
                     if is_market_open:
-                        raise ValueError(f"No option chain data available for {ticker} during market hours")
+                        # During market hours, try individual request one more time
+                        try:
+                            option_chain = conn.get_option_chain(ticker, expiration)
+                            if option_chain and 'calls' in option_chain and 'puts' in option_chain:
+                                calls = option_chain['calls']
+                                puts = option_chain['puts']
+                            else:
+                                raise ValueError(f"No option chain data available for {ticker} during market hours")
+                        except Exception as e:
+                            logger.error(f"Error getting option chain for {ticker} during market hours: {str(e)}")
+                            raise
                     else:
-                        logger.info(f"No option chain data for {ticker} during closed market. Using mock data.")
-                        # Generate mock data only outside market hours
+                        # Outside market hours, generate mock data
+                        logger.info(f"No option data for {ticker} during closed market. Using mock data.")
                         option_chain = self._generate_mock_option_chain(ticker, current_price, expiration)
-                
-                calls = option_chain['calls']
-                puts = option_chain['puts']
+                        calls = option_chain['calls']
+                        puts = option_chain['puts']
                 
                 # Find call and put with delta closest to target
                 best_call = None
@@ -1004,16 +1121,13 @@ class OptionsService:
                         best_put['delta'] = -target_delta
                         best_put['is_mock'] = True
                 
-                # Get portfolio position data
+                # Get portfolio position data for this ticker
                 position_size = 0
                 avg_cost = 0
                 market_value = 0
                 unrealized_pnl = 0
                 
-                # Check portfolio for this stock
-                portfolio_data = conn.get_portfolio()  # This will raise during market hours if no data
-                positions = portfolio_data.get('positions', {})
-                
+                # Use the portfolio data we already retrieved
                 if ticker in positions:
                     position = positions[ticker]
                     position_size = float(position.get('shares', 0))
@@ -1024,6 +1138,7 @@ class OptionsService:
                 # Calculate potential earnings
                 call_earnings = None
                 put_earnings = None
+                available_cash = portfolio_data.get('available_cash', 0)
                 
                 if best_call and position_size > 0:
                     # For covered calls (only if we own the stock)
@@ -1043,8 +1158,6 @@ class OptionsService:
                 if best_put:
                     # For cash-secured puts
                     put_strike = float(best_put.get('strike', 0))
-                    # Use available cash from portfolio instead of account summary
-                    available_cash = portfolio_data.get('available_cash', 0)
                     safety_margin = 0.8  # Use only 80% of available funds
                     max_position_value = available_cash * safety_margin
                     
@@ -1099,6 +1212,8 @@ class OptionsService:
                     logger.info(f"Error processing {ticker} during closed market: {str(e)}")
                     continue
         
+        elapsed_time = time.time() - start_time
+        logger.info(f"Completed delta-targeted options request in {elapsed_time:.2f} seconds")
         return result
 
     def _generate_mock_option_chain(self, ticker, current_price, expiration):
