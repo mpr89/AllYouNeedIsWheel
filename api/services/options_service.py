@@ -9,7 +9,7 @@ import random
 import time
 from datetime import datetime, timedelta
 import pandas as pd
-from core.connection import IBConnection, Option
+from core.connection import IBConnection, Option, Stock
 from core.utils import get_closest_friday, get_next_monthly_expiration, get_strikes_around_price
 from config import Config
 from db.database import OptionsDatabase
