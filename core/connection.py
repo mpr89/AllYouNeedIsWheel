@@ -1641,13 +1641,17 @@ class IBConnection:
         """
         logger.info(f"Creating {len(strikes) * len(rights)} option contracts for {symbol} {expiration}")
         
+        # Initialize empty lists for results
+        calls = []
+        puts = []
+        
         # First qualify the stock contract to get conId
         stock_contract = Stock(symbol, exchange, 'USD')
         qualified_stocks = self.ib.qualifyContracts(stock_contract)
         
         if not qualified_stocks:
             logger.error(f"Could not qualify stock contract for {symbol}")
-            return {'calls': [], 'puts': []}
+            return {'calls': calls, 'puts': puts}
         
         stock_contract = qualified_stocks[0]
         
@@ -1659,7 +1663,7 @@ class IBConnection:
         # Ensure expiration is in the correct format (YYYYMMDD)
         if len(expiration) != 8:
             logger.error(f"Invalid expiration format: {expiration}. Must be YYYYMMDD")
-            return {'calls': [], 'puts': []}
+            return {'calls': calls, 'puts': puts}
 
         try:
             # Parse and validate the date (will raise if invalid)
@@ -1670,13 +1674,13 @@ class IBConnection:
             # Validate date components
             if not (2000 <= exp_year <= 2100 and 1 <= exp_month <= 12 and 1 <= exp_day <= 31):
                 logger.error(f"Invalid expiration date components: {exp_year}-{exp_month}-{exp_day}")
-                return {'calls': [], 'puts': []}
+                return {'calls': calls, 'puts': puts}
             
             # Create standard IB API format YYYYMMDD
             formatted_expiration = f"{exp_year}{exp_month:02d}{exp_day:02d}"
         except ValueError as e:
             logger.error(f"Error parsing expiration date {expiration}: {e}")
-            return {'calls': [], 'puts': []}
+            return {'calls': calls, 'puts': puts}
         
         # Create option contracts for each strike/right combination
         for strike in strikes:
@@ -1706,7 +1710,7 @@ class IBConnection:
         # Return empty result if no contracts could be created
         if not option_contracts:
             logger.error(f"No option contracts created for {symbol}")
-            return {'calls': [], 'puts': []}
+            return {'calls': calls, 'puts': puts}
         
         # Request market data for all contracts in a single batch
         # This avoids the overhead of requesting data for each contract individually
@@ -1738,9 +1742,6 @@ class IBConnection:
                     break
                 
             # Process the results
-            calls = []
-            puts = []
-            
             for (strike, right), ticker in tickers.items():
                 # Extract data from ticker
                 last = ticker.last if hasattr(ticker, 'last') and ticker.last is not None else 0
