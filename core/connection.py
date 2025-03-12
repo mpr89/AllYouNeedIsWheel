@@ -1402,8 +1402,8 @@ class IBConnection:
             return False
             
         # Regular market hours are 9:30 AM to 4:00 PM Eastern
-        market_open = time(9, 30)
-        market_close = time(16, 0)
+        market_open = datetime.time(9, 30)
+        market_close = datetime.time(16, 0)
         current_time = now.time()
         
         return market_open <= current_time <= market_close
