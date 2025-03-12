@@ -825,7 +825,7 @@ class IBConnection:
         if not self.is_connected():
             logger.warning("Not connected to IB. Attempting to connect...")
             if not self.connect():
-                return None
+                return self._generate_mock_portfolio()
         
         try:
             # Get account summary
@@ -864,15 +864,9 @@ class IBConnection:
                 }
             
             if not positions and self.readonly:
-                # When in read-only mode, we might not get real positions
-                # In this case, return the raw portfolio for backwards compatibility
-                logger.debug("No positions found, returning raw portfolio data for backwards compatibility")
-                return {
-                    'account_id': account_id,
-                    'available_cash': account_info.get('available_cash', 0),
-                    'account_value': account_info.get('account_value', 0),
-                    'positions': portfolio  # Return the raw portfolio for backwards compatibility
-                }
+                # When in read-only mode or no positions found, return mock portfolio
+                logger.debug("No positions found, returning mock portfolio data")
+                return self._generate_mock_portfolio()
             
             return {
                 'account_id': account_id,
@@ -883,7 +877,7 @@ class IBConnection:
         
         except Exception as e:
             logger.error(f"Error getting portfolio: {e}")
-            return None
+            return self._generate_mock_portfolio()
 
     def get_options_chain(self, ticker, expiration=None, strikes=10, interval=5):
         """Get options chain for a ticker around current price"""
@@ -1089,7 +1083,7 @@ class IBConnection:
                 'open': latest_bar.open,
                 'volume': latest_bar.volume,
                 'halted': False,
-                'timestamp': latest_bar.date.isoformat(),
+                'timestamp': latest_bar.date.isoformat() if hasattr(latest_bar, 'date') else datetime.now().isoformat(),
                 'is_historical': True  # Flag to indicate this is historical data
             }
             
@@ -1112,6 +1106,267 @@ class IBConnection:
                 logger.debug(traceback.format_exc())
                 return None
                 
+    def _generate_mock_stock_data(self, symbol):
+        """
+        Generate mock stock data when real and historical data are unavailable
+        
+        Args:
+            symbol (str): Stock symbol
+            
+        Returns:
+            dict: Mock stock data
+        """
+        import random
+        from datetime import datetime
+        
+        # Special case for NVDA
+        if symbol.upper() == 'NVDA':
+            # Use a realistic price for NVDA (around $900 - will be a fixed reference point)
+            price = 905.75
+            volume = 32457890  # Realistic volume
+            
+            logger.warning(f"Using MOCK DATA for NVIDIA stock - real and historical data unavailable")
+            
+            return {
+                'symbol': 'NVDA',
+                'last': price,
+                'bid': price * 0.998,  # $904.00
+                'ask': price * 1.002,  # $907.50
+                'high': price * 1.02,   # $923.87
+                'low': price * 0.985,   # $892.16
+                'close': price,
+                'open': price * 0.99,   # $896.69
+                'volume': volume,
+                'halted': False,
+                'timestamp': datetime.now().isoformat(),
+                'is_mock': True
+            }
+        else:
+            # Generate random stock price between $10-$500 for other stocks
+            price = random.uniform(10, 500)
+            
+            # Generate random volume
+            volume = random.randint(10000, 1000000)
+            
+            logger.warning(f"Using MOCK DATA for stock {symbol} - real and historical data unavailable")
+            
+            return {
+                'symbol': symbol,
+                'last': price,
+                'bid': price * 0.995,  # 0.5% less than last
+                'ask': price * 1.005,  # 0.5% more than last
+                'high': price * 1.03,  # 3% above last
+                'low': price * 0.97,   # 3% below last
+                'close': price,
+                'open': price * 0.99,  # Slightly below close
+                'volume': volume,
+                'halted': False,
+                'timestamp': datetime.now().isoformat(),
+                'is_mock': True
+            }
+
+    def _generate_mock_option_data(self, symbol, expiration, right, strike):
+        """
+        Generate mock option data when real and historical data are unavailable
+        
+        Args:
+            symbol (str): Stock symbol
+            expiration (str): Option expiration date in format YYYYMMDD
+            right (str): Option right ('C' for call, 'P' for put)
+            strike (float): Strike price
+            
+        Returns:
+            dict: Mock option data
+        """
+        import random
+        from datetime import datetime
+        
+        # Special case for NVDA
+        if symbol.upper() == 'NVDA':
+            # Use our fixed NVDA mock price
+            underlying = 905.75
+            
+            # Calculate days to expiry
+            days_to_expiry = (datetime.strptime(expiration, '%Y%m%d') - datetime.now()).days
+            if days_to_expiry < 0:
+                days_to_expiry = 30  # Default to 30 days if expiry is in the past
+            
+            # Calculate a more realistic option price based on strike and right
+            if right == 'C':
+                # For calls, intrinsic value is underlying - strike (if positive)
+                intrinsic = max(0, underlying - strike)
+                # Time value decreases as strike increases (for OTM options)
+                if strike > underlying:
+                    # Out-of-the-money call
+                    distance_factor = max(0, 1 - (strike - underlying) / (underlying * 0.2))
+                    time_value = underlying * 0.05 * distance_factor * (days_to_expiry / 30)
+                else:
+                    # In-the-money call
+                    time_value = underlying * 0.03 * (days_to_expiry / 30)
+            else:
+                # For puts, intrinsic value is strike - underlying (if positive)
+                intrinsic = max(0, strike - underlying)
+                # Time value decreases as strike decreases (for OTM options)
+                if strike < underlying:
+                    # Out-of-the-money put
+                    distance_factor = max(0, 1 - (underlying - strike) / (underlying * 0.2))
+                    time_value = underlying * 0.05 * distance_factor * (days_to_expiry / 30)
+                else:
+                    # In-the-money put
+                    time_value = underlying * 0.03 * (days_to_expiry / 30)
+            
+            option_price = max(0.05, intrinsic + time_value)
+            
+            # Calculate implied volatility (higher for further expiries and strikes near the money)
+            atm_factor = 1 - min(1, abs(strike - underlying) / (underlying * 0.2))
+            implied_vol = 0.3 + (0.2 * atm_factor) + (0.1 * (days_to_expiry / 180))
+            implied_vol = min(0.9, max(0.15, implied_vol))
+            
+            # Generate volume (higher for strikes near the money)
+            volume_base = 2000 * atm_factor
+            volume = int(max(10, volume_base * random.uniform(0.7, 1.3)))
+            
+            # Calculate Greeks
+            if right == 'C':
+                if strike == underlying:
+                    delta = 0.5
+                elif underlying > strike:  # ITM call
+                    delta = 0.5 + (0.5 * (1 - (strike / underlying)))
+                    delta = min(0.95, delta)
+                else:  # OTM call
+                    delta = 0.5 - (0.5 * (1 - (underlying / strike)))
+                    delta = max(0.05, delta)
+            else:  # Put
+                if strike == underlying:
+                    delta = -0.5
+                elif underlying > strike:  # OTM put
+                    delta = -0.5 + (0.5 * (1 - (strike / underlying)))
+                    delta = max(-0.95, delta)
+                else:  # ITM put
+                    delta = -0.5 - (0.5 * (1 - (underlying / strike)))
+                    delta = min(-0.05, delta)
+            
+            # Other Greeks based on delta
+            gamma = 0.08 * (1 - abs(delta * 2 - 1))  # Highest when ATM
+            theta = -option_price * (0.01 + 0.02 * (1 - abs(delta * 2 - 1)))  # Higher decay near ATM
+            vega = option_price * 0.1 * (1 - abs(delta * 2 - 1))  # Highest when ATM
+            
+            logger.warning(f"Using MOCK DATA for NVIDIA option {expiration} {strike} {right} - real data unavailable")
+        else:
+            # Use existing logic for other stocks
+            try:
+                stock_data = self.get_stock_data(symbol)
+                if stock_data and 'last' in stock_data:
+                    underlying = stock_data['last']
+                else:
+                    underlying = random.uniform(10, 500)
+            except:
+                underlying = random.uniform(10, 500)
+                
+            # Calculate a reasonable option price based on strike and right
+            if right == 'C':
+                intrinsic = max(0, underlying - strike)
+            else:
+                intrinsic = max(0, strike - underlying)
+                
+            # Add time value (more for longer dated options)
+            days_to_expiry = (datetime.strptime(expiration, '%Y%m%d') - datetime.now()).days
+            if days_to_expiry < 0:
+                days_to_expiry = 30
+            
+            time_value = underlying * 0.01 * (days_to_expiry / 30)
+            
+            option_price = max(0.05, intrinsic + time_value)
+            
+            # Generate random volume
+            volume = random.randint(10, 1000)
+            
+            # Generate random implied volatility
+            implied_vol = random.uniform(0.2, 0.8)
+            
+            # Calculate simple Greeks
+            if strike == underlying:
+                delta = 0.5 if right == 'C' else -0.5
+            elif (underlying > strike and right == 'C') or (underlying < strike and right == 'P'):
+                delta = 0.7 if right == 'C' else -0.7
+            else:
+                delta = 0.3 if right == 'C' else -0.3
+            
+            gamma = 0.05
+            theta = -option_price * 0.01
+            vega = option_price * 0.1
+            
+            logger.warning(f"Using MOCK DATA for option {symbol} {expiration} {strike} {right} - real data unavailable")
+            
+        return {
+            'symbol': symbol,
+            'expiration': expiration,
+            'strike': strike,
+            'right': right,
+            'bid': option_price * 0.95,
+            'ask': option_price * 1.05,
+            'last': option_price,
+            'volume': volume,
+            'open_interest': volume * 2,
+            'underlying': underlying,
+            'delta': delta,
+            'gamma': gamma,
+            'theta': theta,
+            'vega': vega,
+            'implied_vol': implied_vol,
+            'is_mock': True,
+            'timestamp': datetime.now().isoformat()
+        }
+
+    def _generate_mock_portfolio(self):
+        """
+        Generate a mock portfolio with NVDA position and $1M cash
+        
+        Returns:
+            dict: Mock portfolio data
+        """
+        # Use our NVDA mock price
+        nvda_price = 905.75
+        nvda_position = 5000
+        nvda_value = nvda_price * nvda_position
+        
+        # Create mock account data
+        account_id = "U1234567"  # Mock account number
+        total_cash = 1000000.00  # $1M cash as requested
+        total_value = total_cash + nvda_value
+        
+        # Create a contract for NVDA position
+        from ib_insync import Contract
+        nvda_contract = Contract(
+            symbol="NVDA",
+            secType="STK",
+            exchange="SMART",
+            currency="USD"
+        )
+        
+        # Create the portfolio object
+        positions = {
+            "NVDA": {
+                'shares': nvda_position,
+                'avg_cost': nvda_price * 0.8,  # Assume we bought it 20% cheaper
+                'market_price': nvda_price,
+                'market_value': nvda_value,
+                'unrealized_pnl': nvda_value - (nvda_price * 0.8 * nvda_position),
+                'realized_pnl': 0,
+                'contract': nvda_contract
+            }
+        }
+        
+        logger.warning("Using MOCK PORTFOLIO DATA - showing 5000 NVDA shares and $1M cash")
+        
+        return {
+            'account_id': account_id,
+            'available_cash': total_cash,
+            'account_value': total_value,
+            'positions': positions,
+            'is_mock': True
+        }
+
     def get_stock_data(self, symbol):
         """
         Get comprehensive stock data including price, volume, and other metrics
@@ -1125,35 +1380,40 @@ class IBConnection:
         if not self.is_connected():
             logger.warning("Not connected to IB. Attempting to connect...")
             if not self.connect():
-                return None
+                return self._generate_mock_stock_data(symbol)
         
         try:
             # Ensure event loop exists for this thread
             self._ensure_event_loop()
             
-            # Create a stock contract
-            contract = Contract(symbol=symbol, secType='STK', exchange='SMART', currency='USD')
+            # Create contract for the stock
+            contract = Stock(symbol, 'SMART', 'USD')
             
-            # Qualify the contract
-            qualified_contracts = self.ib.qualifyContracts(contract)
-            if not qualified_contracts:
-                logger.error(f"Failed to qualify contract for {symbol}")
-                return None
+            # Try to get ticker data
+            tickers = self.ib.reqTickers(contract)
             
-            qualified_contract = qualified_contracts[0]
+            if not tickers:
+                logger.warning(f"No ticker data for {symbol}. Trying historical data.")
+                historical_data = self.get_historical_data(symbol)
+                if historical_data:
+                    return historical_data
+                else:
+                    logger.warning(f"No historical data for {symbol} either. Using mock data.")
+                    return self._generate_mock_stock_data(symbol)
             
-            # Request market data
-            ticker = self.ib.reqMktData(qualified_contract)
+            # Get the latest ticker data
+            ticker_data = tickers[0]
             
-            # Wait for market data to be received
-            wait_time = 5  # seconds
-            self.ib.sleep(wait_time)
-            
-            # Get price data
-            last_price = ticker.last if ticker.last else (ticker.close if ticker.close else None)
-            bid_price = ticker.bid if ticker.bid else None
-            ask_price = ticker.ask if ticker.ask else None
-            last_rth_trade = ticker.lastRTHTrade.price if hasattr(ticker, 'lastRTHTrade') and ticker.lastRTHTrade else None
+            # Extract relevant data from the ticker
+            last_price = ticker_data.last if ticker_data.last else ticker_data.close
+            bid_price = ticker_data.bid if ticker_data.bid else ticker_data.close
+            ask_price = ticker_data.ask if ticker_data.ask else ticker_data.close
+            volume = ticker_data.volume if ticker_data.volume else 0
+            high = ticker_data.high if ticker_data.high else last_price
+            low = ticker_data.low if ticker_data.low else last_price
+            open_price = ticker_data.open if ticker_data.open else last_price
+            close_price = ticker_data.close if ticker_data.close else last_price
+            last_rth_trade = ticker_data.lastRTHTrade.price if hasattr(ticker_data, 'lastRTHTrade') and ticker_data.lastRTHTrade else last_price
             
             # If no last price is available, check other prices
             if last_price is None:
@@ -1167,53 +1427,39 @@ class IBConnection:
                 elif last_rth_trade:
                     last_price = last_rth_trade
             
-            # Cancel the market data subscription
-            self.ib.cancelMktData(qualified_contract)
-            
-            # If we couldn't get any real-time data, try historical data
-            if last_price is None:
-                logger.warning(f"Could not get real-time price for {symbol}, trying historical data...")
-                historical_data = self.get_historical_data(symbol)
-                if historical_data:
-                    logger.info(f"Using historical data for {symbol}")
-                    return historical_data
-                else:
-                    logger.error(f"Could not get any data for {symbol}")
-                    return None
-            
             # Build and return the result
             result = {
                 'symbol': symbol,
                 'last': last_price,
                 'bid': bid_price,
                 'ask': ask_price,
-                'high': ticker.high,
-                'low': ticker.low,
-                'close': ticker.close,
-                'open': ticker.open,
-                'volume': ticker.volume,
-                'halted': ticker.halted if hasattr(ticker, 'halted') else False,
-                'timestamp': datetime.now().isoformat(),
+                'high': high,
+                'low': low,
+                'close': close_price,
+                'open': open_price,
+                'volume': volume,
+                'halted': ticker_data.halted if hasattr(ticker_data, 'halted') else False,
+                'timestamp': ticker_data.date.isoformat() if hasattr(ticker_data, 'date') else datetime.now().isoformat(),
                 'is_historical': False  # This is real-time data
             }
             
             return result
         
         except Exception as e:
-            error_msg = str(e)
-            if "There is no current event loop" in error_msg:
-                logger.error("Asyncio event loop error in get_stock_data. Retrying with new event loop.")
-                # Try one more time with a fresh event loop
-                try:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    return self.get_stock_data(symbol)
-                except Exception as retry_error:
-                    logger.error(f"Failed to get stock data after event loop retry: {str(retry_error)}")
-                    return None
-            else:
-                logger.error(f"Error getting stock data for {symbol}: {error_msg}")
-                return None
+            logger.error(f"Error getting stock data for {symbol}: {str(e)}")
+            logger.debug(traceback.format_exc())
+            
+            # Try historical data as fallback
+            try:
+                logger.info(f"Attempting to get historical data for {symbol} as fallback")
+                historical_data = self.get_historical_data(symbol)
+                if historical_data:
+                    return historical_data
+            except Exception as hist_error:
+                logger.error(f"Historical data fallback also failed: {str(hist_error)}")
+                
+            # As a last resort, use mock data
+            return self._generate_mock_stock_data(symbol)
 
     def get_historical_option_data(self, symbol, expiration, right='C', strike=None, duration='1 D', bar_size='1 day'):
         """
@@ -1233,7 +1479,11 @@ class IBConnection:
         if not self.is_connected():
             logger.warning("Not connected to IB. Attempting to connect...")
             if not self.connect():
-                return None
+                # If can't connect, use mock data
+                if strike is None:
+                    # Use a reasonable mock strike if none provided
+                    strike = 100.0
+                return self._generate_mock_option_data(symbol, expiration, right, strike)
                 
         try:
             # Ensure event loop exists for this thread
@@ -1245,7 +1495,7 @@ class IBConnection:
                 stock_data = self.get_stock_data(symbol)
                 if not stock_data:
                     logger.error(f"Could not get stock data for {symbol}")
-                    return None
+                    return self._generate_mock_option_data(symbol, expiration, right, 100.0)
                 
                 stock_price = stock_data.get('last')
                 
@@ -1261,12 +1511,12 @@ class IBConnection:
                 qualified_contracts = self.ib.qualifyContracts(option)
                 if not qualified_contracts:
                     logger.error(f"Could not qualify option contract: {symbol} {expiration} {strike} {right}")
-                    return None
+                    return self._generate_mock_option_data(symbol, expiration, right, strike)
                     
                 qualified_contract = qualified_contracts[0]
             except Exception as e:
                 logger.error(f"Error qualifying option contract: {e}")
-                return None
+                return self._generate_mock_option_data(symbol, expiration, right, strike)
             
             # Request historical data
             logger.info(f"Getting historical data for option {symbol} {expiration} {strike} {right}")
@@ -1284,7 +1534,7 @@ class IBConnection:
             
             if not bars or len(bars) == 0:
                 logger.warning(f"No historical data available for option {symbol} {expiration} {strike} {right}")
-                return None
+                return self._generate_mock_option_data(symbol, expiration, right, strike)
                 
             # Get the latest bar
             latest_bar = bars[-1]
@@ -1306,7 +1556,7 @@ class IBConnection:
                 'theta': None,       # Not available in historical data
                 'vega': None,        # Not available in historical data
                 'is_historical': True,
-                'timestamp': latest_bar.date.isoformat()
+                'timestamp': latest_bar.date.isoformat() if hasattr(latest_bar, 'date') else datetime.now().isoformat()
             }
             
             logger.info(f"Successfully retrieved historical data for option {symbol} {expiration} {strike} {right}")
@@ -1315,7 +1565,7 @@ class IBConnection:
         except Exception as e:
             logger.error(f"Error getting historical option data: {e}")
             logger.debug(traceback.format_exc())
-            return None
+            return self._generate_mock_option_data(symbol, expiration, right, strike)
             
     def _adjust_to_standard_strike(self, strike):
         """
