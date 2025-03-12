@@ -931,14 +931,6 @@ class OptionsService:
             current_price = stock_prices[ticker]
             
             # For delta-targeted options, focus only on strikes likely to have the target delta
-            # For calls, higher delta -> closer to the money, lower delta -> further OTM
-            # For puts, higher (absolute) delta -> closer to the money, lower delta -> further OTM
-            
-            # Estimate strikes with delta close to target
-            # For a rough approximation, translate target delta to percentage OTM
-            # For calls: strike ≈ price * (1 + delta_factor)
-            # For puts: strike ≈ price * (1 - delta_factor)
-            
             # Calculate base strike adjustments (more precise for options pricing models)
             if target_delta <= 0.15:  # Far OTM
                 call_factor = 0.15 + (1 - target_delta) * 0.15
@@ -1004,59 +996,28 @@ class OptionsService:
                     'timestamp': datetime.now().isoformat(),
                 }
                 
-                # For each ticker, get options individually to avoid timeouts
-                # This is slightly slower but more reliable than bulk requests
+                # For each ticker, use the new snapshot method to get option data directly
+                # without qualifying individual contracts first
                 option_chain = None
                 calls = []
                 puts = []
                 
                 try:
-                    # Get option chain for this ticker
-                    logger.info(f"Fetching option chain for {ticker} with {len(strikes_map[ticker])} strikes")
+                    # Use our new optimized method that doesn't require qualifying every contract
+                    logger.info(f"Fetching option chain snapshot for {ticker} with {len(strikes_map[ticker])} strikes")
+                    option_chain = conn.get_option_chain_snapshot(
+                        ticker,
+                        expiration,
+                        strikes_map[ticker],
+                        rights=['C', 'P']
+                    )
                     
-                    # Try bulk request for this single ticker with its strikes
-                    single_ticker_options = {}
-                    try:
-                        single_ticker_options = conn.get_multiple_option_prices(
-                            ticker,
-                            expiration,
-                            strikes_map[ticker],
-                            rights=['C', 'P']
-                        )
-                    except Exception as e:
-                        logger.warning(f"Bulk option price request failed for {ticker}: {str(e)}")
-                    
-                    if single_ticker_options:
-                        # Process the options data
-                        for (strike, right), option_data in single_ticker_options.items():
-                            option_dict = {
-                                'symbol': ticker,
-                                'expiration': expiration,
-                                'strike': strike,
-                                'right': right,
-                                'bid': option_data.get('bid', 0),
-                                'ask': option_data.get('ask', 0),
-                                'last': option_data.get('last', 0),
-                                'is_mock': False
-                            }
-                            
-                            # Calculate delta if not provided
-                            if right == 'C':  # Call
-                                # Delta decreases as strike increases
-                                delta = max(0.01, min(0.99, 0.5 - (strike - current_price) / (current_price * 0.2)))
-                                option_dict['delta'] = round(delta, 3)
-                                calls.append(option_dict)
-                            else:  # Put
-                                # Put delta increases as strike decreases
-                                delta = max(-0.99, min(-0.01, -0.5 + (strike - current_price) / (current_price * 0.2)))
-                                option_dict['delta'] = round(delta, 3)
-                                puts.append(option_dict)
+                    if option_chain and 'calls' in option_chain and 'puts' in option_chain:
+                        calls = option_chain['calls']
+                        puts = option_chain['puts']
+                        logger.info(f"Successfully fetched {len(calls)} calls and {len(puts)} puts for {ticker}")
                     else:
-                        # Try individual method if bulk method failed
-                        option_chain = conn.get_option_chain(ticker, expiration)
-                        if option_chain and 'calls' in option_chain and 'puts' in option_chain:
-                            calls = option_chain['calls']
-                            puts = option_chain['puts']
+                        logger.warning(f"No options data returned from snapshot for {ticker}")
                 except Exception as e:
                     if is_market_open:
                         logger.error(f"Error getting option chain for {ticker} during market hours: {str(e)}")
