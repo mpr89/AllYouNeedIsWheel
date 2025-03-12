@@ -24,4 +24,9 @@ logs/
 reports/
 
 # IB API cache
-.api-cache/ 
+.api-cache/
+
+# SQLite databases
+*.db
+options.db
+trades.db 

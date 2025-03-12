@@ -1,45 +1,107 @@
 # Auto-Trader
 
-A simple automated trading system for options trading on Interactive Brokers (IBKR).
-
-## Overview
-
-Auto-Trader is a lightweight tool that connects to Interactive Brokers to automate basic options trading strategies. It focuses on simplicity and reliability for options sellers.
+Auto-Trader is a financial options trading assistant that helps analyze, visualize, and recommend option trading strategies. It connects to Interactive Brokers TWS/IB Gateway, retrieves portfolio data, analyzes options, and presents recommendations through a user-friendly web interface.
 
 ## Features
 
-### Core Trading System
-- **IBKR Integration**: Connection to Interactive Brokers' TWS or IB Gateway
-- **Basic Options Strategies**: 
-  - Selling put options (cash-secured puts)
-  - Selling call options (covered calls)
-- **Backtesting**: Test your strategies with historical data before risking real capital
-- **Trade Logging**: All trades are logged in SQLite database for performance review
+- **Portfolio Dashboard**: View your current portfolio positions, value, and performance metrics
+- **Options Analysis**: Analyze option chains for any stock ticker
+- **Trading Recommendations**: Get AI-powered option trade recommendations
+- **Interactive Web Interface**: Modern, responsive web application with data visualizations
+- **API Integration**: Backend API to interact with Interactive Brokers
 
-### Technical Stack
-- **Language**: Python
-- **IBKR Connectivity**: ib_insync for API connection
-- **Database**: SQLite for trade logging
-- **Automation**: Basic scheduled execution via cron (Linux/macOS)
+## Architecture
 
-## Requirements
+The application consists of:
 
-- Interactive Brokers account
-- IBKR Trader Workstation (TWS) or IB Gateway
-- API credentials from Interactive Brokers
-- Python 3.8+
+1. **Core Libraries** (`autotrader/core/`): Connection to IB TWS, data processing, and analysis
+2. **Database Module** (`autotrader/db/`): SQLite database for storing trade data and history
+3. **API Backend** (`api/`): Flask-based REST API serving data to the frontend
+4. **Web Frontend** (`frontend/`): HTML/CSS/JS browser interface for visualization
 
-## Getting Started
+## Installation
 
-Detailed setup and usage instructions coming soon. The project is currently under development.
+1. Clone this repository:
+   ```
+   git clone <repository-url>
+   cd auto-trader
+   ```
 
-## Roadmap
+2. Install required dependencies:
+   ```
+   pip install -r requirements.txt
+   ```
 
-### Phase 1: Core Trading System
-- Simple put and call selling functionality
-- Basic backtesting capabilities
-- Trade logging in SQLite
+3. Make sure Interactive Brokers TWS/IB Gateway is running with API connections enabled.
 
-## Disclaimer
+## Configuration
 
-Trading options involves significant risk of loss. This software is for educational and research purposes only. Always consult with a financial advisor before implementing any trading strategy.
+Create a `.env` file in the root directory with the following settings:
+
+```
+IB_HOST=127.0.0.1
+IB_PORT=7497
+IB_CLIENT_ID=1
+IB_READONLY=True
+
+LOG_LEVEL=INFO
+REPORT_DIR=reports
+```
+
+## Usage
+
+### Starting the Web Application
+
+Run the Flask web server:
+
+```
+python app.py
+```
+
+This will start the application on http://localhost:5000
+
+### API Endpoints
+
+- **Portfolio Data**: GET `/api/portfolio/`
+- **Option Chains**: GET `/api/options/<ticker>`
+- **Recommendations**: GET `/api/recommendations/`
+
+### Web Interface
+
+The web interface consists of four main pages:
+
+1. **Dashboard**: Overview of your portfolio and key metrics
+2. **Portfolio**: Detailed view of all positions
+3. **Options**: Option chain analysis for selected tickers
+4. **Recommendations**: Trade recommendations based on your strategy
+
+## Development
+
+### Project Structure
+
+```
+auto-trader/
+├── api/                      # Flask API backend
+│   ├── routes/               # API route modules
+│   └── services/             # Business logic for API
+├── autotrader/               # Core library 
+│   ├── core/                 # Trading functionality
+│   ├── db/                   # Database operations
+│   └── strategies/           # Trading strategies
+├── frontend/                 # Frontend web application
+│   ├── static/               # Static assets (CSS, JS)
+│   └── templates/            # Jinja2 HTML templates
+├── app.py                    # Main application entry point
+├── requirements.txt          # Python dependencies
+└── README.md                 # Documentation
+```
+
+## License
+
+[MIT License](LICENSE)
+
+## Acknowledgments
+
+- Interactive Brokers API for Python
+- Flask web framework
+- Bootstrap CSS framework

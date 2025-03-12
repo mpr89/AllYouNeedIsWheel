@@ -13,7 +13,7 @@ import traceback
 import jinja2
 from ib_insync import Option
 
-from autotrader.core.utils import get_closest_friday, get_next_monthly_expiration
+from core.utils import get_closest_friday, get_next_monthly_expiration
 
 # Configure logger
 logger = logging.getLogger('autotrader.processing')

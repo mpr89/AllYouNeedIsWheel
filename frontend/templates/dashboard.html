@@ -1,0 +1,232 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Auto-Trader{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-md-12">
+        <h1>Dashboard</h1>
+        <p class="lead">Overview of your portfolio and trading activity</p>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <h5 class="card-title">Portfolio Value</h5>
+                <h2 class="display-4 mb-0" id="account-value">$0.00</h2>
+                <p class="text-muted" id="daily-change">0.00% today</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <h5 class="card-title">Cash Balance</h5>
+                <h2 class="display-4 mb-0" id="cash-balance">$0.00</h2>
+                <p class="text-muted">Available for trading</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <h5 class="card-title">Positions</h5>
+                <h2 class="display-4 mb-0" id="positions-count">0</h2>
+                <p class="text-muted">Active positions</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card shadow-sm">
+            <div class="card-header">
+                <h5 class="mb-0">Portfolio Performance</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="portfolio-chart" height="250"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card shadow-sm">
+            <div class="card-header">
+                <h5 class="mb-0">Recent Option Recommendations</h5>
+            </div>
+            <div class="card-body">
+                <div id="recommendations-list">
+                    <p class="text-center text-muted">Loading recommendations...</p>
+                </div>
+            </div>
+            <div class="card-footer text-end">
+                <a href="/recommendations" class="btn btn-sm btn-primary">View All</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-12">
+        <div class="card shadow-sm">
+            <div class="card-header">
+                <h5 class="mb-0">Top Portfolio Positions</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Symbol</th>
+                                <th>Position</th>
+                                <th>Market Price</th>
+                                <th>Market Value</th>
+                                <th>Unrealized P&L</th>
+                            </tr>
+                        </thead>
+                        <tbody id="positions-table">
+                            <tr>
+                                <td colspan="5" class="text-center">Loading positions...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="card-footer text-end">
+                <a href="/portfolio" class="btn btn-sm btn-primary">View All</a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Fetch portfolio data
+    fetch('/api/portfolio')
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('account-value').textContent = formatCurrency(data.account_value);
+            document.getElementById('cash-balance').textContent = formatCurrency(data.cash_balance);
+            document.getElementById('positions-count').textContent = data.positions_count;
+            
+            // Set daily change percentage
+            const dailyChange = document.getElementById('daily-change');
+            if (data.unrealized_pnl > 0) {
+                dailyChange.textContent = `+${data.unrealized_pnl.toFixed(2)}% today`;
+                dailyChange.classList.add('text-success');
+            } else if (data.unrealized_pnl < 0) {
+                dailyChange.textContent = `${data.unrealized_pnl.toFixed(2)}% today`;
+                dailyChange.classList.add('text-danger');
+            }
+        })
+        .catch(error => console.error('Error fetching portfolio data:', error));
+    
+    // Fetch positions
+    fetch('/api/portfolio/positions')
+        .then(response => response.json())
+        .then(data => {
+            const positionsTable = document.getElementById('positions-table');
+            positionsTable.innerHTML = '';
+            
+            // Sort positions by market value (descending)
+            data.sort((a, b) => b.market_value - a.market_value);
+            
+            // Show top 5 positions
+            data.slice(0, 5).forEach(position => {
+                const row = document.createElement('tr');
+                
+                // Format unrealized P&L cell with color
+                const pnlClass = position.unrealized_pnl >= 0 ? 'text-success' : 'text-danger';
+                const pnlPrefix = position.unrealized_pnl >= 0 ? '+' : '';
+                
+                row.innerHTML = `
+                    <td><strong>${position.symbol}</strong></td>
+                    <td>${position.position}</td>
+                    <td>${formatCurrency(position.market_price)}</td>
+                    <td>${formatCurrency(position.market_value)}</td>
+                    <td class="${pnlClass}">${pnlPrefix}${formatCurrency(position.unrealized_pnl)}</td>
+                `;
+                
+                positionsTable.appendChild(row);
+            });
+            
+            if (data.length === 0) {
+                positionsTable.innerHTML = '<tr><td colspan="5" class="text-center">No positions found</td></tr>';
+            }
+        })
+        .catch(error => console.error('Error fetching positions:', error));
+    
+    // Fetch recommendations
+    fetch('/api/recommendations')
+        .then(response => response.json())
+        .then(data => {
+            const recommendationsList = document.getElementById('recommendations-list');
+            recommendationsList.innerHTML = '';
+            
+            if (data.recommendations && data.recommendations.length > 0) {
+                const ul = document.createElement('ul');
+                ul.className = 'list-group list-group-flush';
+                
+                // Show top 5 recommendations
+                data.recommendations.slice(0, 5).forEach(rec => {
+                    const li = document.createElement('li');
+                    li.className = 'list-group-item d-flex justify-content-between align-items-center';
+                    
+                    li.innerHTML = `
+                        <div>
+                            <strong>${rec.ticker}</strong> - ${rec.option_type} ${formatCurrency(rec.strike)}
+                            <br>
+                            <small class="text-muted">Exp: ${formatDate(rec.expiration)}</small>
+                        </div>
+                        <span class="badge bg-primary rounded-pill">${formatCurrency(rec.premium)}</span>
+                    `;
+                    
+                    ul.appendChild(li);
+                });
+                
+                recommendationsList.appendChild(ul);
+            } else {
+                recommendationsList.innerHTML = '<p class="text-center text-muted">No recommendations available</p>';
+            }
+        })
+        .catch(error => console.error('Error fetching recommendations:', error));
+    
+    // Initialize portfolio performance chart
+    const ctx = document.getElementById('portfolio-chart').getContext('2d');
+    const portfolioChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: ['7 Days Ago', '6 Days Ago', '5 Days Ago', '4 Days Ago', '3 Days Ago', 'Yesterday', 'Today'],
+            datasets: [{
+                label: 'Portfolio Value',
+                data: [0, 0, 0, 0, 0, 0, 0],
+                backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                borderColor: 'rgba(75, 192, 192, 1)',
+                borderWidth: 2,
+                tension: 0.3
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: false
+                }
+            }
+        }
+    });
+    
+    // Utility functions
+    function formatCurrency(value) {
+        return '$' + parseFloat(value).toFixed(2).replace(/\d(?=(\d{3})+\.)/g, '$&,');
+    }
+    
+    function formatDate(dateString) {
+        const date = new Date(dateString);
+        return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+    }
+</script>
+{% endblock %} 

@@ -21,11 +21,11 @@ logging.getLogger('ib_insync.wrapper').setLevel(logging.WARNING)
 logging.getLogger('ib_insync.client').setLevel(logging.WARNING)
 logging.getLogger('ib_insync.ticker').setLevel(logging.WARNING)
 
-# Import from autotrader modules
-from autotrader.core.connection import IBConnection, Option, suppress_ib_logs
-from autotrader.core.processing import SimpleOptionsStrategy, print_stock_summary, format_currency, format_percentage, open_in_browser
-from autotrader.core.utils import get_closest_friday, get_next_monthly_expiration, setup_logging, rotate_reports
-from autotrader.config import Config
+# Import from modules
+from core.connection import IBConnection, Option, suppress_ib_logs
+from core.processing import SimpleOptionsStrategy, print_stock_summary, format_currency, format_percentage
+from core.utils import get_closest_friday, get_next_monthly_expiration, setup_logging, rotate_reports
+from config import Config
 
 # Suppress ib_insync logs globally
 suppress_ib_logs()
@@ -48,23 +48,23 @@ def main():
     parser.add_argument('--tickers', type=str, help='Optional: Comma-separated stock tickers to analyze. If not provided, tickers will be derived from portfolio positions.')
     parser.add_argument('--interval', type=int, help='Strike price interval')
     parser.add_argument('--monthly', action='store_true', help='Use monthly options expiration')
-    parser.add_argument('--strikes', type=int, help='Number of strikes to analyze on each side')
+    parser.add_argument('--strikes', type=int, help='Number of strikes to analyze')
     args = parser.parse_args()
     
     # Load configuration
-    config = Config(DEFAULT_CONFIG, args.config)
+    config = Config(args.config)
     
-    # Setup logging
-    logs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
-    log_file = setup_logging(logs_dir, config.get('log_level', 'INFO'))
-    logger = logging.getLogger('autotrader')
+    # Set up logging
+    log_level = config.get('log_level', DEFAULT_CONFIG['log_level'])
+    log_dir = config.get('log_dir', 'logs')
+    logger = setup_logging(level=log_level, log_dir=log_dir)
     
-    # Make sure required directories exist
-    reports_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), config.get('report_dir', 'reports'))
+    # Prepare report directory
+    reports_dir = config.get('report_dir', DEFAULT_CONFIG['report_dir'])
     os.makedirs(reports_dir, exist_ok=True)
     
-    # Clean up old reports
-    rotate_reports(reports_dir, max_reports=5)
+    # Rotate old log files and reports
+    rotate_reports(reports_dir)
     
     # Get tickers to analyze
     tickers = []
@@ -223,25 +223,6 @@ def main():
                 alt_last = alt_option_data.get('last', 0) or 0
                 print(f"  Bid: ${alt_bid:.2f}, Ask: ${alt_ask:.2f}, Last: ${alt_last:.2f}")
         
-        # Generate HTML report
-        if all_results:
-            report_file = os.path.join(reports_dir, f"options_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.html")
-            strategy.generate_html_report(all_results, report_file)
-            logger.info(f"Report generated: {report_file}")
-            
-            # Open the report in the browser
-            if open_in_browser(report_file):
-                logger.info(f"Opened report in browser: {report_file}")
-            else:
-                logger.warning(f"Failed to open report in browser: {report_file}")
-            
-            # Clean up old reports
-            old_reports = sorted(Path(reports_dir).glob("options_report_*.html"))
-            if len(old_reports) > 5:  # Keep only the 5 most recent reports
-                for old_report in old_reports[:-5]:
-                    logger.debug(f"Deleted old report file: {old_report}")
-                    old_report.unlink()
-            
     except Exception as e:
         logger.error(f"Error: {str(e)}")
         logger.error(traceback.format_exc())
