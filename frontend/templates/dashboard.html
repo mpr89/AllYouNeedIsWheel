@@ -41,41 +41,13 @@
 </div>
 
 <div class="row mb-4">
-    <div class="col-md-6">
-        <div class="card shadow-sm">
-            <div class="card-header">
-                <h5 class="mb-0">Portfolio Performance</h5>
-            </div>
-            <div class="card-body">
-                <canvas id="portfolio-chart" height="250"></canvas>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-6">
-        <div class="card shadow-sm">
-            <div class="card-header">
-                <h5 class="mb-0">Recent Option Recommendations</h5>
-            </div>
-            <div class="card-body">
-                <div id="recommendations-list">
-                    <p class="text-center text-muted">Loading recommendations...</p>
-                </div>
-            </div>
-            <div class="card-footer text-end">
-                <a href="/recommendations" class="btn btn-sm btn-primary">View All</a>
-            </div>
-        </div>
-    </div>
-</div>
-
-<div class="row mb-4">
     <div class="col-md-12">
         <div class="card shadow-sm">
             <div class="card-header d-flex justify-content-between align-items-center">
-                <h5 class="mb-0">Delta Targeted Options (δ ≈ 0.1)</h5>
-                <div>
-                    <button class="btn btn-sm btn-outline-primary" id="refresh-options">
-                        <i class="bi bi-arrow-repeat"></i> Refresh
+                <h5 class="mb-0">Option Opportunities</h5>
+                <div class="d-flex align-items-center">
+                    <button class="btn btn-sm btn-outline-primary" id="refresh-all-options">
+                        <i class="bi bi-arrow-repeat"></i> Refresh All
                     </button>
                 </div>
             </div>
@@ -87,22 +59,24 @@
                                 <th>Symbol</th>
                                 <th>Price</th>
                                 <th>Position</th>
+                                <th>OTM %</th>
                                 <th>Sell Call</th>
                                 <th>Call Premium</th>
                                 <th>Sell Put</th>
                                 <th>Put Premium</th>
+                                <th>Actions</th>
                             </tr>
                         </thead>
-                        <tbody id="delta-options-table">
+                        <tbody id="options-table">
                             <tr>
-                                <td colspan="7" class="text-center">Loading options data...</td>
+                                <td colspan="9" class="text-center">Loading options data...</td>
                             </tr>
                         </tbody>
                     </table>
                 </div>
             </div>
             <div class="card-footer">
-                <small class="text-muted">Options shown have delta values around 0.1, optimal for balancing risk and reward.</small>
+                <small class="text-muted">Options shown are Out of The Money (OTM). Higher percentage = further OTM = lower premium but less risk.</small>
             </div>
         </div>
     </div>
@@ -144,203 +118,636 @@
 
 {% block scripts %}
 <script>
-    // Fetch portfolio data
-    fetch('/api/portfolio')
-        .then(response => response.json())
-        .then(data => {
-            document.getElementById('account-value').textContent = formatCurrency(data.account_value);
-            document.getElementById('cash-balance').textContent = formatCurrency(data.cash_balance);
-            document.getElementById('positions-count').textContent = data.positions_count;
-            
-            // Set daily change percentage
-            const dailyChange = document.getElementById('daily-change');
-            if (data.unrealized_pnl > 0) {
-                dailyChange.textContent = `+${data.unrealized_pnl.toFixed(2)}% today`;
-                dailyChange.classList.add('text-success');
-            } else if (data.unrealized_pnl < 0) {
-                dailyChange.textContent = `${data.unrealized_pnl.toFixed(2)}% today`;
-                dailyChange.classList.add('text-danger');
-            }
-        })
-        .catch(error => console.error('Error fetching portfolio data:', error));
-    
-    // Fetch positions
-    fetch('/api/portfolio/positions')
-        .then(response => response.json())
-        .then(data => {
-            const positionsTable = document.getElementById('positions-table');
-            positionsTable.innerHTML = '';
-            
-            // Sort positions by market value (descending)
-            data.sort((a, b) => b.market_value - a.market_value);
-            
-            // Show top 5 positions
-            data.slice(0, 5).forEach(position => {
-                const row = document.createElement('tr');
-                
-                // Format unrealized P&L cell with color
-                const pnlClass = position.unrealized_pnl >= 0 ? 'text-success' : 'text-danger';
-                const pnlPrefix = position.unrealized_pnl >= 0 ? '+' : '';
-                
-                row.innerHTML = `
-                    <td><strong>${position.symbol}</strong></td>
-                    <td>${position.position}</td>
-                    <td>${formatCurrency(position.market_price)}</td>
-                    <td>${formatCurrency(position.market_value)}</td>
-                    <td class="${pnlClass}">${pnlPrefix}${formatCurrency(position.unrealized_pnl)}</td>
-                `;
-                
-                positionsTable.appendChild(row);
-            });
-            
-            if (data.length === 0) {
-                positionsTable.innerHTML = '<tr><td colspan="5" class="text-center">No positions found</td></tr>';
-            }
-        })
-        .catch(error => console.error('Error fetching positions:', error));
-    
-    // Fetch recommendations
-    fetch('/api/recommendations')
-        .then(response => response.json())
-        .then(data => {
-            const recommendationsList = document.getElementById('recommendations-list');
-            recommendationsList.innerHTML = '';
-            
-            if (data.recommendations && data.recommendations.length > 0) {
-                const ul = document.createElement('ul');
-                ul.className = 'list-group list-group-flush';
-                
-                // Show top 5 recommendations
-                data.recommendations.slice(0, 5).forEach(rec => {
-                    const li = document.createElement('li');
-                    li.className = 'list-group-item d-flex justify-content-between align-items-center';
-                    
-                    li.innerHTML = `
-                        <div>
-                            <strong>${rec.ticker}</strong> - ${rec.option_type} ${formatCurrency(rec.strike)}
-                            <br>
-                            <small class="text-muted">Exp: ${formatDate(rec.expiration)}</small>
-                        </div>
-                        <span class="badge bg-primary rounded-pill">${formatCurrency(rec.premium)}</span>
-                    `;
-                    
-                    ul.appendChild(li);
-                });
-                
-                recommendationsList.appendChild(ul);
-            } else {
-                recommendationsList.innerHTML = '<p class="text-center text-muted">No recommendations available</p>';
-            }
-        })
-        .catch(error => console.error('Error fetching recommendations:', error));
-    
-    // Fetch delta-targeted options
-    function fetchDeltaTargetedOptions() {
-        const deltaOptionsTable = document.getElementById('delta-options-table');
-        deltaOptionsTable.innerHTML = '<tr><td colspan="7" class="text-center">Loading options data...</td></tr>';
+    // Wait for DOM to be fully loaded
+    document.addEventListener('DOMContentLoaded', function() {
+        // Initialize data structures
+        const tickersData = {};
         
-        fetch('/api/options/delta-targeted')
-            .then(response => response.json())
-            .then(data => {
-                deltaOptionsTable.innerHTML = '';
-                
-                if (data.data && Object.keys(data.data).length > 0) {
-                    // Sort tickers by those with positions first, then alphabetically
-                    const tickers = Object.keys(data.data).sort((a, b) => {
-                        const posA = data.data[a].position.size;
-                        const posB = data.data[b].position.size;
-                        
-                        if (posA !== 0 && posB === 0) return -1;
-                        if (posA === 0 && posB !== 0) return 1;
-                        return a.localeCompare(b);
-                    });
+        // Utility functions
+        function formatCurrency(value) {
+            if (value === undefined || value === null) return '$0.00';
+            return '$' + parseFloat(value).toFixed(2).replace(/\d(?=(\d{3})+\.)/g, '$&,');
+        }
+        
+        function formatDate(dateString) {
+            const date = new Date(dateString);
+            return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+        }
+        
+        function formatStrike(strike) {
+            if (!strike || strike === 0) return 'N/A';
+            return formatCurrency(strike);
+        }
+        
+        // Fetch portfolio data
+        function loadPortfolioData() {
+            fetch('/api/portfolio')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('account-value').textContent = formatCurrency(data.account_value || 0);
+                    document.getElementById('cash-balance').textContent = formatCurrency(data.cash_balance || 0);
+                    document.getElementById('positions-count').textContent = data.positions_count || 0;
                     
-                    tickers.forEach(ticker => {
-                        const option = data.data[ticker];
+                    // Set daily change percentage
+                    const dailyChange = document.getElementById('daily-change');
+                    if (data.unrealized_pnl > 0) {
+                        dailyChange.textContent = `+${data.unrealized_pnl.toFixed(2)}% today`;
+                        dailyChange.classList.add('text-success');
+                    } else if (data.unrealized_pnl < 0) {
+                        dailyChange.textContent = `${data.unrealized_pnl.toFixed(2)}% today`;
+                        dailyChange.classList.add('text-danger');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching portfolio data:', error);
+                });
+        }
+        
+        // Fetch positions
+        function loadPositionsTable() {
+            fetch('/api/portfolio/positions')
+                .then(response => response.json())
+                .then(data => {
+                    const positionsTable = document.getElementById('positions-table');
+                    positionsTable.innerHTML = '';
+                    
+                    if (!data || data.length === 0) {
+                        positionsTable.innerHTML = '<tr><td colspan="5" class="text-center">No positions found</td></tr>';
+                        return;
+                    }
+                    
+                    // Sort positions by market value (descending)
+                    data.sort((a, b) => b.market_value - a.market_value);
+                    
+                    // Show top 5 positions
+                    data.slice(0, 5).forEach(position => {
                         const row = document.createElement('tr');
                         
-                        // Calculate call and put earnings display
-                        let callEarnings = 'N/A';
-                        let putEarnings = 'N/A';
-                        
-                        if (option.call.earnings) {
-                            const e = option.call.earnings;
-                            callEarnings = `${e.max_contracts} × ${formatCurrency(e.premium_per_contract)} = ${formatCurrency(e.total_premium)} (${e.return_on_capital.toFixed(2)}%)`;
-                        }
-                        
-                        if (option.put.earnings) {
-                            const e = option.put.earnings;
-                            putEarnings = `${e.max_contracts} × ${formatCurrency(e.premium_per_contract)} = ${formatCurrency(e.total_premium)} (${e.return_on_cash.toFixed(2)}%)`;
-                        }
+                        // Format unrealized P&L cell with color
+                        const pnlClass = position.unrealized_pnl >= 0 ? 'text-success' : 'text-danger';
+                        const pnlPrefix = position.unrealized_pnl >= 0 ? '+' : '';
                         
                         row.innerHTML = `
-                            <td><strong>${ticker}</strong></td>
-                            <td>${formatCurrency(option.price)}</td>
-                            <td>${option.position.size !== 0 ? option.position.size : '-'}</td>
-                            <td>${formatStrike(option.call.strike)} (δ=${option.call.delta.toFixed(2)})</td>
-                            <td>${option.call.earnings ? callEarnings : 'N/A'}</td>
-                            <td>${formatStrike(option.put.strike)} (δ=${option.put.delta.toFixed(2)})</td>
-                            <td>${option.put.earnings ? putEarnings : 'N/A'}</td>
+                            <td><strong>${position.symbol}</strong></td>
+                            <td>${position.position}</td>
+                            <td>${formatCurrency(position.market_price)}</td>
+                            <td>${formatCurrency(position.market_value)}</td>
+                            <td class="${pnlClass}">${pnlPrefix}${formatCurrency(position.unrealized_pnl)}</td>
                         `;
                         
-                        deltaOptionsTable.appendChild(row);
+                        positionsTable.appendChild(row);
                     });
+                })
+                .catch(error => {
+                    console.error('Error fetching positions:', error);
+                    const positionsTable = document.getElementById('positions-table');
+                    positionsTable.innerHTML = '<tr><td colspan="5" class="text-center text-danger">Error loading positions</td></tr>';
+                });
+        }
+        
+        // Fetch options for a specific ticker
+        function fetchOptionsForTicker(ticker) {
+            if (!ticker) {
+                console.error('No ticker provided to fetchOptionsForTicker');
+                return;
+            }
+            
+            if (!tickersData[ticker]) {
+                console.error(`Ticker data not found for ${ticker}`);
+                return;
+            }
+            
+            const tickerData = tickersData[ticker];
+            const otmPercentage = tickerData.otmPercentage || 10; // Default to 10% if not set
+            
+            console.log(`Preparing to fetch real-time options for ${ticker} with OTM ${otmPercentage}%`);
+            
+            // Mark as loading
+            tickerData.isLoading = true;
+            
+            // Update UI to show loading
+            const row = document.getElementById(`ticker-row-${ticker}`);
+            if (!row) {
+                console.error(`Row not found for ticker ${ticker}`);
+                return;
+            }
+            
+            const tdElements = row.querySelectorAll('td');
+            
+            // Make sure we have the correct number of cells
+            if (tdElements.length < 8) {
+                console.error(`Not enough TD elements for ticker ${ticker}, found ${tdElements.length}, expected at least 8`);
+                // Try to fix the row structure if it's incorrect
+                fixRowStructure(row, ticker);
+                return;
+            }
+            
+            // Show loading spinners
+            tdElements[4].innerHTML = '<div class="spinner-border spinner-border-sm" role="status"><span class="visually-hidden">Loading...</span></div>';
+            tdElements[5].innerHTML = '';
+            tdElements[6].innerHTML = '<div class="spinner-border spinner-border-sm" role="status"><span class="visually-hidden">Loading...</span></div>';
+            tdElements[7].innerHTML = '';
+            
+            // Build the API URL with proper encoding, adding real_time=true parameter
+            // Also add a timestamp to prevent caching
+            const timestamp = new Date().getTime();
+            const apiUrl = `/api/options/otm?tickers=${encodeURIComponent(ticker)}&otm=${otmPercentage}&real_time=true&options_only=true&t=${timestamp}`;
+            console.log(`Fetching options ONLY from API: ${apiUrl}`);
+            
+            // Make API call to get the options data with no-cache headers
+            fetch(apiUrl, {
+                method: 'GET',
+                headers: {
+                    'Cache-Control': 'no-cache, no-store, must-revalidate',
+                    'Pragma': 'no-cache',
+                    'Expires': '0'
+                }
+            })
+            .then(response => {
+                if (!response.ok) {
+                    console.error(`HTTP error ${response.status} for ${apiUrl}`);
+                    throw new Error(`HTTP error ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log(`Received real-time data for ${ticker}:`, data);
+                
+                if (!data || !data.data || !data.data[ticker]) {
+                    console.error(`Invalid data structure received for ${ticker}`, data);
+                    throw new Error('Invalid data structure');
+                }
+                
+                // Store the data
+                tickerData.data = data;
+                tickerData.isLoading = false;
+                tickerData.lastUpdated = new Date();
+                
+                // Update UI with the data
+                updateTickerRow(ticker, data);
+            })
+            .catch(error => {
+                console.error(`Error fetching real-time options for ${ticker}:`, error);
+                tickerData.isLoading = false;
+                
+                const tdElements = row.querySelectorAll('td');
+                if (tdElements && tdElements.length >= 8) {
+                    // Show error in the UI
+                    tdElements[4].innerHTML = 'Error';
+                    tdElements[5].innerHTML = '';
+                    tdElements[6].innerHTML = 'Error loading options';
+                    tdElements[7].innerHTML = '';
+                }
+            });
+        }
+        
+        // Function to fix row structure if it's not correct
+        function fixRowStructure(row, ticker) {
+            console.log(`Attempting to fix row structure for ${ticker}`);
+            
+            if (!row || !ticker || !tickersData[ticker]) return;
+            
+            const position = tickersData[ticker];
+            
+            // Clear and rebuild the row with correct structure
+            row.innerHTML = `
+                <td><strong>${ticker}</strong></td>
+                <td>${formatCurrency(position.price)}</td>
+                <td>${position.position}</td>
+                <td>
+                    <div class="input-group input-group-sm" style="width: 120px;">
+                        <input type="range" class="form-range otm-slider" id="otm-${ticker}" 
+                               min="5" max="30" step="5" value="${position.otmPercentage || 10}" 
+                               data-ticker="${ticker}">
+                        <span class="input-group-text" id="otm-value-${ticker}">${position.otmPercentage || 10}%</span>
+                    </div>
+                </td>
+                <td>Loading...</td>
+                <td></td>
+                <td>Loading...</td>
+                <td></td>
+                <td>
+                    <button class="btn btn-sm btn-outline-secondary refresh-btn" data-ticker="${ticker}">
+                        <i class="bi bi-arrow-repeat"></i>
+                    </button>
+                </td>
+            `;
+            
+            // Re-attach event listeners for this row
+            const slider = row.querySelector('.otm-slider');
+            if (slider) {
+                slider.addEventListener('input', function() {
+                    const value = this.value;
+                    const valueElement = document.getElementById(`otm-value-${ticker}`);
+                    if (valueElement) {
+                        valueElement.textContent = `${value}%`;
+                    }
+                    tickersData[ticker].otmPercentage = parseInt(value);
+                    console.log(`Updated OTM for ${ticker} to ${value}%`);
+                });
+            }
+            
+            const refreshBtn = row.querySelector('.refresh-btn');
+            if (refreshBtn) {
+                refreshBtn.addEventListener('click', function() {
+                    console.log(`Refresh button clicked for ${ticker}`);
+                    fetchOptionsForTicker(ticker);
+                });
+            }
+            
+            // Add a new fetch button since we removed the original one
+            const fetchBtn = document.createElement('button');
+            fetchBtn.className = 'btn btn-sm btn-primary fetch-btn';
+            fetchBtn.setAttribute('data-ticker', ticker);
+            fetchBtn.textContent = 'Fetch Options';
+            fetchBtn.addEventListener('click', function() {
+                console.log(`Fetch button clicked for ${ticker}`);
+                fetchOptionsForTicker(ticker);
+            });
+            
+            // Add the fetch button to cell 5 (index 4)
+            const tdElements = row.querySelectorAll('td');
+            if (tdElements.length >= 5) {
+                tdElements[4].innerHTML = '';
+                tdElements[4].appendChild(fetchBtn);
+            }
+            
+            console.log(`Row structure fixed for ${ticker}, attempting to fetch options again`);
+            setTimeout(() => fetchOptionsForTicker(ticker), 500);
+        }
+        
+        // Update a ticker row with options data
+        function updateTickerRow(ticker, data) {
+            if (!ticker || !data || !data.data || !data.data[ticker]) {
+                console.error('Invalid data structure for ticker', ticker, data);
+                return;
+            }
+            
+            const option = data.data[ticker];
+            const row = document.getElementById(`ticker-row-${ticker}`);
+            if (!row) return;
+            
+            const tdElements = row.querySelectorAll('td');
+            if (!tdElements || tdElements.length < 8) return;
+            
+            // Log the full option data to debug premium issues
+            console.log(`Real-time option data for ${ticker}:`, option);
+            
+            // Calculate call and put earnings display
+            let callContent = 'N/A';
+            let callPremium = 'N/A';
+            let putContent = 'N/A';
+            let putPremium = 'N/A';
+            
+            if (option.call) {
+                // Show the raw bid/ask values with more decimal places to see if they're very small but non-zero
+                const callBid = option.call.bid !== undefined ? option.call.bid : 'undefined';
+                const callAsk = option.call.ask !== undefined ? option.call.ask : 'undefined';
+                
+                // Check for very small values that might be treated as zero
+                const hasSmallBidAsk = (callBid > 0 && callBid < 0.01) || (callAsk > 0 && callAsk < 0.01);
+                
+                console.log(`Call raw values for ${ticker}: bid=${callBid.toFixed(6)}, ask=${callAsk.toFixed(6)}, hasSmallValues=${hasSmallBidAsk}`);
+                
+                callContent = formatStrike(option.call.strike) + (option.call.delta ? ` (δ=${option.call.delta.toFixed(2)})` : '');
+                
+                // Log call earnings data
+                console.log(`Call earnings for ${ticker}:`, option.call.earnings);
+                
+                if (option.call.earnings) {
+                    const e = option.call.earnings;
+                    
+                    // Show raw premium value with more decimal places
+                    const rawPremium = e.premium_per_contract !== undefined ? e.premium_per_contract : 'undefined';
+                    console.log(`Call premium raw value for ${ticker}: ${rawPremium.toFixed(6)}`);
+                    
+                    // Check if we actually have valid premium values
+                    if (e.premium_per_contract > 0 && e.total_premium > 0) {
+                        callPremium = `${e.max_contracts} × ${formatCurrency(e.premium_per_contract)} = ${formatCurrency(e.total_premium)} (${e.return_on_capital.toFixed(2)}%)`;
+                    } else {
+                        // Show exact bid/ask values with more decimal places
+                        callPremium = `<span class="text-muted">No premium available</span><br>
+                            <small class="text-muted">Bid: ${callBid.toFixed(6)}, Ask: ${callAsk.toFixed(6)}</small>
+                            ${hasSmallBidAsk ? '<br><small class="text-warning">⚠️ Very small values detected</small>' : ''}`;
+                    }
                 } else {
-                    deltaOptionsTable.innerHTML = '<tr><td colspan="7" class="text-center">No options data available</td></tr>';
+                    callPremium = `<span class="text-muted">No earnings data available</span><br>
+                        <small class="text-muted">Bid: ${callBid.toFixed(6)}, Ask: ${callAsk.toFixed(6)}</small>
+                        ${hasSmallBidAsk ? '<br><small class="text-warning">⚠️ Very small values detected</small>' : ''}`;
+                }
+            }
+            
+            if (option.put) {
+                // Show the raw bid/ask values with more decimal places to see if they're very small but non-zero
+                const putBid = option.put.bid !== undefined ? option.put.bid : 'undefined';
+                const putAsk = option.put.ask !== undefined ? option.put.ask : 'undefined';
+                
+                // Check for very small values that might be treated as zero
+                const hasSmallBidAsk = (putBid > 0 && putBid < 0.01) || (putAsk > 0 && putAsk < 0.01);
+                
+                console.log(`Put raw values for ${ticker}: bid=${putBid.toFixed(6)}, ask=${putAsk.toFixed(6)}, hasSmallValues=${hasSmallBidAsk}`);
+                
+                putContent = formatStrike(option.put.strike) + (option.put.delta ? ` (δ=${option.put.delta.toFixed(2)})` : '');
+                
+                // Log put earnings data
+                console.log(`Put earnings for ${ticker}:`, option.put.earnings);
+                
+                if (option.put.earnings) {
+                    const e = option.put.earnings;
+                    
+                    // Show raw premium value with more decimal places
+                    const rawPremium = e.premium_per_contract !== undefined ? e.premium_per_contract : 'undefined';
+                    console.log(`Put premium raw value for ${ticker}: ${rawPremium.toFixed(6)}`);
+                    
+                    // Check if we actually have valid premium values
+                    if (e.premium_per_contract > 0 && e.total_premium > 0) {
+                        putPremium = `${e.max_contracts} × ${formatCurrency(e.premium_per_contract)} = ${formatCurrency(e.total_premium)} (${e.return_on_cash.toFixed(2)}%)`;
+                    } else {
+                        // Show exact bid/ask values with more decimal places
+                        putPremium = `<span class="text-muted">No premium available</span><br>
+                            <small class="text-muted">Bid: ${putBid.toFixed(6)}, Ask: ${putAsk.toFixed(6)}</small>
+                            ${hasSmallBidAsk ? '<br><small class="text-warning">⚠️ Very small values detected</small>' : ''}`;
+                    }
+                } else {
+                    putPremium = `<span class="text-muted">No earnings data available</span><br>
+                        <small class="text-muted">Bid: ${putBid.toFixed(6)}, Ask: ${putAsk.toFixed(6)}</small>
+                        ${hasSmallBidAsk ? '<br><small class="text-warning">⚠️ Very small values detected</small>' : ''}`;
+                }
+            }
+            
+            // Show expiration date from the data
+            const expirationDate = data.expiration ? new Date(data.expiration) : null;
+            const expirationText = expirationDate ? 
+                `<small class="text-muted">Exp: ${formatDate(expirationDate)}</small>` : 
+                '';
+            
+            // Format the last updated time
+            const now = new Date();
+            const lastUpdated = tickersData[ticker].lastUpdated || now;
+            const timeDiff = Math.round((now - lastUpdated) / 1000);
+            const lastUpdatedText = `<small class="text-success">Real-time data as of ${lastUpdated.toLocaleTimeString()}</small>`;
+            
+            // Update the cells with extra information
+            tdElements[4].innerHTML = `${callContent}<br>${expirationText}<br>${lastUpdatedText}`;
+            tdElements[5].innerHTML = callPremium;
+            tdElements[6].innerHTML = `${putContent}<br>${expirationText}`;
+            tdElements[7].innerHTML = putPremium;
+            
+            // Add OTM information
+            const otmInfo = document.createElement('div');
+            otmInfo.className = 'mt-2';
+            otmInfo.innerHTML = `<small class="text-muted">Using OTM: ${data.otm_percentage}%</small>`;
+            
+            // Add a data refresh button after options are loaded
+            const refreshBtn = document.createElement('button');
+            refreshBtn.className = 'btn btn-sm btn-outline-primary fetch-btn mt-2';
+            refreshBtn.setAttribute('data-ticker', ticker);
+            refreshBtn.innerHTML = `<i class="bi bi-arrow-repeat"></i> Refresh Data`;
+            refreshBtn.addEventListener('click', function() {
+                fetchOptionsForTicker(ticker);
+            });
+            
+            // Add the refresh button to the Sell Call cell
+            const fetchBtnContainer = document.createElement('div');
+            fetchBtnContainer.className = 'mt-2';
+            fetchBtnContainer.appendChild(refreshBtn);
+            
+            if (tdElements[4].querySelector('.fetch-btn') === null) {
+                tdElements[4].appendChild(otmInfo);
+                tdElements[4].appendChild(fetchBtnContainer);
+            }
+        }
+        
+        // Refresh all tickers
+        function refreshAllOptions() {
+            const tickers = Object.keys(tickersData);
+            if (tickers.length === 0) return;
+            
+            // Process each ticker with a small delay
+            tickers.forEach((ticker, index) => {
+                setTimeout(() => {
+                    fetchOptionsForTicker(ticker);
+                }, index * 1000); // 1 second delay between each
+            });
+        }
+        
+        // Add event listeners after tickers are loaded
+        function setupEventListeners() {
+            try {
+                // Add event listeners to all OTM sliders
+                document.querySelectorAll('.otm-slider').forEach(slider => {
+                    slider.addEventListener('input', function() {
+                        const ticker = this.getAttribute('data-ticker');
+                        const value = this.value;
+                        
+                        if (ticker && tickersData[ticker]) {
+                            // Update display and store state
+                            const valueElement = document.getElementById(`otm-value-${ticker}`);
+                            if (valueElement) {
+                                valueElement.textContent = `${value}%`;
+                            }
+                            tickersData[ticker].otmPercentage = parseInt(value);
+                            console.log(`Updated OTM for ${ticker} to ${value}%`);
+                        }
+                    });
+                });
+                
+                // Add event listeners to all fetch buttons
+                document.querySelectorAll('.fetch-btn').forEach(button => {
+                    button.addEventListener('click', function() {
+                        const ticker = this.getAttribute('data-ticker');
+                        if (ticker) {
+                            console.log(`Fetch button clicked for ${ticker}`);
+                            fetchOptionsForTicker(ticker);
+                        } else {
+                            console.error('Fetch button clicked but no ticker attribute found');
+                        }
+                    });
+                });
+                
+                // Add event listeners to all refresh buttons
+                document.querySelectorAll('.refresh-btn').forEach(button => {
+                    button.addEventListener('click', function() {
+                        const ticker = this.getAttribute('data-ticker');
+                        if (ticker) {
+                            console.log(`Refresh button clicked for ${ticker}`);
+                            fetchOptionsForTicker(ticker);
+                        }
+                    });
+                });
+                
+                // Add refresh all button handler
+                const refreshAllBtn = document.getElementById('refresh-all-options');
+                if (refreshAllBtn) {
+                    refreshAllBtn.addEventListener('click', function() {
+                        console.log('Refresh all button clicked');
+                        refreshAllOptions();
+                    });
+                }
+                
+                console.log('All event listeners set up successfully');
+            } catch (error) {
+                console.error('Error setting up event listeners:', error);
+            }
+        }
+        
+        // Fetch tickers and initialize the options table
+        function fetchTickers() {
+            const optionsTable = document.getElementById('options-table');
+            if (!optionsTable) {
+                console.error('Options table not found');
+                return;
+            }
+            
+            optionsTable.innerHTML = '<tr><td colspan="9" class="text-center">Loading tickers...</td></tr>';
+            
+            fetch('/api/portfolio/positions')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    optionsTable.innerHTML = '';
+                    
+                    if (!data || data.length === 0) {
+                        optionsTable.innerHTML = '<tr><td colspan="9" class="text-center">No tickers found</td></tr>';
+                        return;
+                    }
+                    
+                    console.log('Loaded tickers data:', data);
+                    
+                    // Sort positions by market value (descending)
+                    data.sort((a, b) => b.market_value - a.market_value);
+                    
+                    // Create a row for each ticker with OTM slider
+                    data.forEach(position => {
+                        const ticker = position.symbol;
+                        
+                        // Store ticker info in our state object with default OTM of 10%
+                        tickersData[ticker] = {
+                            otmPercentage: 10,
+                            price: position.market_price,
+                            position: position.position,
+                            data: null,
+                            isLoading: false
+                        };
+                        
+                        const row = document.createElement('tr');
+                        row.id = `ticker-row-${ticker}`;
+                        
+                        // Ensure we're adding 9 cells to each row (9 columns in the table)
+                        row.innerHTML = `
+                            <td><strong>${ticker}</strong></td>
+                            <td>${formatCurrency(position.market_price)}</td>
+                            <td>${position.position}</td>
+                            <td>
+                                <div class="input-group input-group-sm" style="width: 120px;">
+                                    <input type="range" class="form-range otm-slider" id="otm-${ticker}" 
+                                           min="5" max="30" step="5" value="10" 
+                                           data-ticker="${ticker}">
+                                    <span class="input-group-text" id="otm-value-${ticker}">10%</span>
+                                </div>
+                            </td>
+                            <td><!-- Sell Call --></td>
+                            <td><!-- Call Premium --></td>
+                            <td><!-- Sell Put --></td>
+                            <td><!-- Put Premium --></td>
+                            <td>
+                                <button class="btn btn-sm btn-outline-secondary refresh-btn" data-ticker="${ticker}">
+                                    <i class="bi bi-arrow-repeat"></i>
+                                </button>
+                            </td>
+                        `;
+                        
+                        // Add row to the table
+                        optionsTable.appendChild(row);
+                        
+                        // Now place the fetch button in the Sell Call column (5th column, index 4)
+                        const tdElements = row.querySelectorAll('td');
+                        if (tdElements.length >= 5) {
+                            const fetchBtn = document.createElement('button');
+                            fetchBtn.className = 'btn btn-sm btn-primary fetch-btn';
+                            fetchBtn.setAttribute('data-ticker', ticker);
+                            fetchBtn.textContent = 'Fetch Options';
+                            tdElements[4].innerHTML = '';
+                            tdElements[4].appendChild(fetchBtn);
+                        }
+                    });
+                    
+                    console.log('Ticker rows created, setting up event listeners');
+                    // Set up event listeners
+                    setupEventListeners();
+                    
+                    // Verify table structure
+                    document.querySelectorAll('#options-table tr').forEach(row => {
+                        const cells = row.querySelectorAll('td');
+                        console.log(`Row ${row.id} has ${cells.length} cells`);
+                    });
+                    
+                    // Load first ticker automatically
+                    if (Object.keys(tickersData).length > 0) {
+                        console.log('Auto-loading first ticker');
+                        const firstTicker = Object.keys(tickersData)[0];
+                        setTimeout(() => {
+                            fetchOptionsForTicker(firstTicker);
+                        }, 500);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching tickers:', error);
+                    optionsTable.innerHTML = '<tr><td colspan="9" class="text-center text-danger">Error loading tickers</td></tr>';
+                });
+        }
+        
+        // Test API connection with real-time data
+        function testApiEndpoint() {
+            console.log('Testing real-time API endpoint...');
+            const timestamp = new Date().getTime();
+            fetch(`/api/options/otm?tickers=AAPL&otm=10&real_time=true&options_only=true&t=${timestamp}`, {
+                headers: {
+                    'Cache-Control': 'no-cache, no-store, must-revalidate',
+                    'Pragma': 'no-cache',
+                    'Expires': '0'
+                }
+            })
+            .then(response => {
+                console.log('Real-time API test response status:', response.status);
+                if (!response.ok) {
+                    console.error('Real-time API test failed with status:', response.status);
+                    return;
+                }
+                console.log('Real-time API test successful!');
+                return response.json();
+            })
+            .then(data => {
+                if (data) {
+                    console.log('Sample real-time data received:', data);
+                    // Check for the presence of bid/ask values
+                    if (data.data && data.data.AAPL && data.data.AAPL.call) {
+                        const call = data.data.AAPL.call;
+                        console.log('AAPL call bid/ask:', call.bid, call.ask);
+                    }
                 }
             })
             .catch(error => {
-                console.error('Error fetching delta-targeted options:', error);
-                deltaOptionsTable.innerHTML = '<tr><td colspan="7" class="text-center text-danger">Error loading options data</td></tr>';
+                console.error('Real-time API test error:', error);
             });
-    }
-    
-    // Initialize portfolio performance chart
-    const ctx = document.getElementById('portfolio-chart').getContext('2d');
-    const portfolioChart = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: ['7 Days Ago', '6 Days Ago', '5 Days Ago', '4 Days Ago', '3 Days Ago', 'Yesterday', 'Today'],
-            datasets: [{
-                label: 'Portfolio Value',
-                data: [0, 0, 0, 0, 0, 0, 0],
-                backgroundColor: 'rgba(75, 192, 192, 0.2)',
-                borderColor: 'rgba(75, 192, 192, 1)',
-                borderWidth: 2,
-                tension: 0.3
-            }]
-        },
-        options: {
-            responsive: true,
-            scales: {
-                y: {
-                    beginAtZero: false
-                }
-            }
+        }
+        
+        // Initialize all dashboard components
+        try {
+            console.log('Initializing dashboard...');
+            loadPortfolioData();
+            loadPositionsTable();
+            fetchTickers();
+            
+            // Test API endpoints
+            setTimeout(testApiEndpoint, 1000);
+        } catch (error) {
+            console.error('Error initializing dashboard:', error);
         }
     });
-    
-    // Add refresh button handler
-    document.getElementById('refresh-options').addEventListener('click', function() {
-        fetchDeltaTargetedOptions();
-    });
-    
-    // Utility functions
-    function formatCurrency(value) {
-        return '$' + parseFloat(value).toFixed(2).replace(/\d(?=(\d{3})+\.)/g, '$&,');
-    }
-    
-    function formatDate(dateString) {
-        const date = new Date(dateString);
-        return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-    }
-    
-    function formatStrike(strike) {
-        if (!strike || strike === 0) return 'N/A';
-        return formatCurrency(strike);
-    }
-    
-    // Load delta-targeted options on page load
-    fetchDeltaTargetedOptions();
 </script>
 {% endblock %} 

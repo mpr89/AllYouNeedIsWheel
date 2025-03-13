@@ -29,14 +29,3 @@ def get_positions():
         return jsonify(results)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
-@bp.route('/performance', methods=['GET'])
-def get_performance():
-    """
-    Get the portfolio performance metrics
-    """
-    try:
-        results = portfolio_service.get_performance_metrics()
-        return jsonify(results)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500 

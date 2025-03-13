@@ -8,82 +8,68 @@ from api.services.options_service import OptionsService
 bp = Blueprint('options', __name__, url_prefix='/api/options')
 options_service = OptionsService()
 
-@bp.route('/', methods=['GET'])
-def get_options():
-    """
-    Get options data for a specific ticker
-    """
-    try:
-        ticker = request.args.get('ticker')
-        if not ticker:
-            return jsonify({'error': 'Ticker symbol is required'}), 400
-            
-        expiration = request.args.get('expiration')
         
-        results = options_service.get_options_data(
-            ticker, 
-            expiration=expiration
-        )
-        return jsonify(results)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-        
-@bp.route('/chain', methods=['GET'])
-def get_option_chain():
-    """
-    Get the full options chain for a ticker
-    """
-    try:
-        ticker = request.args.get('ticker')
-        if not ticker:
-            return jsonify({'error': 'Ticker symbol is required'}), 400
-            
-        expiration = request.args.get('expiration')
-        
-        results = options_service.get_option_chain(ticker, expiration=expiration)
-        return jsonify(results)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-        
-@bp.route('/expirations', methods=['GET'])
-def get_expirations():
-    """
-    Get available option expiration dates for a ticker
-    """
-    try:
-        ticker = request.args.get('ticker')
-        if not ticker:
-            return jsonify({'error': 'Ticker symbol is required'}), 400
-            
-        results = options_service.get_expirations(ticker)
-        return jsonify(results)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
 
-@bp.route('/delta-targeted', methods=['GET'])
-def get_delta_targeted_options():
-    """
-    Get options with delta around 0.1 for each ticker in the portfolio
-    """
+     
+@bp.route('/otm')
+def otm_options():
+    """Get options based on OTM percentage."""
     try:
-        # Parse query parameters
-        tickers = request.args.get('tickers', None)
+        import inspect
+        import traceback
+        import logging
+        logger = logging.getLogger('api.routes.options')
+        
+        logger.info("OTM options endpoint called")
+        
+        # Get and log all request parameters
+        tickers = request.args.get('tickers')
+        otm_percentage = request.args.get('otm', 10, type=float)
+        monthly = request.args.get('monthly', 'false').lower() == 'true'
+        real_time = request.args.get('real_time', 'false').lower() == 'true'
+        options_only = request.args.get('options_only', 'false').lower() == 'true'
+        for_calls = request.args.get('calls', 'true').lower() == 'true'
+        for_puts = request.args.get('puts', 'true').lower() == 'true'
+        
+        logger.info(f"Request params: tickers={tickers}, otm={otm_percentage}, "
+                   f"monthly={monthly}, real_time={real_time}, options_only={options_only}, "
+                   f"for_calls={for_calls}, for_puts={for_puts}")
+        
         if tickers:
             tickers = tickers.split(',')
-            
-        target_delta = request.args.get('delta', 0.1, type=float)
-        delta_range = request.args.get('range', 0.05, type=float)
-        expiration = request.args.get('expiration')
-        monthly = request.args.get('monthly', False, type=bool)
+            logger.info(f"Parsed tickers: {tickers}")
         
-        # Get delta-targeted options
-        results = options_service.get_delta_targeted_options(
-            tickers=tickers,
-            target_delta=target_delta,
-            delta_range=delta_range,
-            expiration=expiration,
-            monthly=monthly
-        )
-        return jsonify(results)
+        # Create options service
+        logger.info("Creating OptionsService instance")
+        try:
+            options_service = OptionsService(real_time=real_time)
+            logger.info("OptionsService instance created successfully")
+        except Exception as svc_err:
+            stack = traceback.format_exc()
+            logger.error(f"Error creating OptionsService: {str(svc_err)}\n{stack}")
+            return jsonify({'error': f"Service initialization error: {str(svc_err)}"}), 500
+        
+        # Call get_otm_options with detailed error handling
+        logger.info("Calling get_otm_options")
+        try:
+            result = options_service.get_otm_options(
+                tickers=tickers,
+                otm_percentage=otm_percentage,
+                for_calls=for_calls,
+                for_puts=for_puts,
+                monthly=monthly,
+                options_only=options_only
+            )
+            logger.info("get_otm_options completed successfully")
+        except Exception as opt_err:
+            stack = traceback.format_exc()
+            logger.error(f"Error in get_otm_options: {str(opt_err)}\n{stack}")
+            return jsonify({'error': f"Options retrieval error: {str(opt_err)}"}), 500
+        
+        # Return the result
+        return jsonify(result)
+        
     except Exception as e:
+        stack = traceback.format_exc()
+        print(f"Unhandled error in OTM options endpoint: {str(e)}\n{stack}")
         return jsonify({'error': str(e)}), 500 
