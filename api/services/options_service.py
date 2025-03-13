@@ -452,8 +452,8 @@ class OptionsService:
                 put_strike = self._adjust_to_standard_strike(put_strike)
                 print(ticker, expiration, 'C', call_strike)
                 call_option = conn.get_option_chain(ticker, expiration,'C',call_strike)
-               
-                options = [call_option]
+                put_option = conn.get_option_chain(ticker, expiration,'P',put_strike)
+                options = [call_option,put_option]
                 if options:
                     logger.info(f"Successfully retrieved real-time options for {ticker}")
             
