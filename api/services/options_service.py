@@ -23,11 +23,10 @@ class OptionsService:
     """
     Service for handling options data operations
     """
-    def __init__(self, real_time=False):
+    def __init__(self):
         self.config = Config()
         self.connection = None
         self.db = OptionsDatabase()
-        self.real_time = real_time
         self.portfolio_service = None  # Will be initialized when needed
         
     def _ensure_connection(self):
@@ -147,107 +146,196 @@ class OptionsService:
             'chain': chain
         }
     
-    def _generate_mock_option_data(self, ticker, expiration, option_type, strike, stock_data):
+    def _generate_mock_option_data(self, ticker, stock_price, otm_percentage, for_calls, for_puts, expiration):
         """
         Generate mock option data when real data is not available
         
         Args:
             ticker (str): Stock ticker symbol
+            stock_price (float): Current stock price
+            otm_percentage (float): Percentage out of the money
+            for_calls (bool): Whether to generate call options
+            for_puts (bool): Whether to generate put options
             expiration (str): Expiration date in YYYYMMDD format
-            option_type (str): Option type ('C' for call, 'P' for put)
-            strike (float): Strike price
-            stock_data (dict): Stock data dictionary
             
         Returns:
             dict: Mock option data
         """
-        logger.warning(f"Generating mock {option_type} option data for {ticker} at strike {strike}")
+        logger.info(f"Generating mock option data for {ticker} at price {stock_price}")
         
-        # Get current stock price and date information
-        stock_price = float(stock_data.get('last', 100))
+        # Get date information
         today = datetime.now()
         
         try:
-            exp_date = datetime.strptime(expiration, '%Y%m%d')
+            # Parse expiration date or use next monthly expiration if not provided
+            if expiration:
+                exp_date = datetime.strptime(expiration, '%Y%m%d')
+            else:
+                # Get next monthly expiration if none provided
+                exp_date = get_next_monthly_expiration()
+                expiration = exp_date.strftime('%Y%m%d')
+            
             days_to_expiry = (exp_date - today).days
             if days_to_expiry < 0:
-                days_to_expiry = 7  # Default to a week if expiration is invalid
-        except:
+                days_to_expiry = 30  # Default to 30 days if expiration is invalid
+                exp_date = today + timedelta(days=30)
+                expiration = exp_date.strftime('%Y%m%d')
+        except Exception as e:
             # Default to 30 days if expiration date is invalid
+            logger.warning(f"Error parsing expiration date: {e}, using default")
             days_to_expiry = 30
+            exp_date = today + timedelta(days=30)
+            expiration = exp_date.strftime('%Y%m%d')
             
+        # Calculate target strikes
+        call_strike = round(stock_price * (1 + otm_percentage / 100), 2)
+        put_strike = round(stock_price * (1 - otm_percentage / 100), 2)
+        
+        # Adjust to standard strike increments
+        call_strike = self._adjust_to_standard_strike(call_strike)
+        put_strike = self._adjust_to_standard_strike(put_strike)
+        
+        result = {
+            'call': None,
+            'put': None,
+            'stock_price': stock_price,
+            'expiration': expiration,
+            'days_to_expiry': days_to_expiry,
+            'otm_percentage': otm_percentage
+        }
+        
         # Calculate time value factor (more time = more extrinsic value)
         time_factor = min(1.0, days_to_expiry / 365)
         
-        # Calculate intrinsic value
-        if option_type == 'C':  # Call option
-            intrinsic = max(0, stock_price - strike)
-        else:  # Put option
-            intrinsic = max(0, strike - stock_price)
-            
         # Calculate implied volatility based on stock price and days to expiry
         # Higher stock prices and longer expirations typically have higher IV
         base_iv = 0.30  # 30% base IV
-        price_factor = 1.0 + (abs(stock_price - strike) / stock_price) * 0.5
-        iv = base_iv * price_factor * (1 + time_factor * 0.5)
         
-        # Calculate extrinsic value based on IV, time, and distance from ATM
-        atm_factor = 1.0 - min(1.0, abs(stock_price - strike) / stock_price)
-        extrinsic = stock_price * iv * time_factor * atm_factor
-        
-        # Total option price
-        option_price = intrinsic + extrinsic
-        
-        # Ensure minimum price
-        option_price = max(0.05, option_price)
-        
-        # Calculate greeks
-        delta = 0.5
-        if option_type == 'C':
-            if stock_price > strike:
-                delta = 0.6 + (0.4 * min(1.0, (stock_price - strike) / strike))
+        if for_calls:
+            # Calculate intrinsic value for call
+            call_intrinsic = max(0, stock_price - call_strike)
+            
+            # Calculate IV with price factor for call
+            call_price_factor = 1.0 + (abs(stock_price - call_strike) / stock_price) * 0.5
+            call_iv = base_iv * call_price_factor * (1 + time_factor * 0.5)
+            
+            # Calculate extrinsic value based on IV, time, and distance from ATM
+            call_atm_factor = 1.0 - min(1.0, abs(stock_price - call_strike) / stock_price)
+            call_extrinsic = stock_price * call_iv * time_factor * call_atm_factor
+            
+            # Total option price
+            call_price = call_intrinsic + call_extrinsic
+            call_price = max(0.05, call_price)
+            
+            # Calculate delta for call
+            call_delta = 0.5
+            if stock_price > call_strike:
+                call_delta = 0.6 + (0.4 * min(1.0, (stock_price - call_strike) / call_strike))
             else:
-                delta = 0.4 * min(1.0, (stock_price / strike))
-        else:  # Put
-            if stock_price < strike:
-                delta = -0.6 - (0.4 * min(1.0, (strike - stock_price) / strike))
+                call_delta = 0.4 * min(1.0, (stock_price / call_strike))
+            
+            # Generate bid/ask spread
+            call_spread_factor = 0.05 + (0.15 * (1 - call_atm_factor))  # Wider spreads for further OTM options
+            call_bid = round(call_price * (1 - call_spread_factor), 2)
+            call_ask = round(call_price * (1 + call_spread_factor), 2)
+            call_last = round((call_bid + call_ask) / 2, 2)
+            
+            # Calculate call option earnings data
+            position_qty = 100  # Assume 100 shares per standard position
+            max_contracts = int(position_qty / 100)  # Each contract represents 100 shares
+            premium_per_contract = call_price * 100  # Premium per contract (100 shares)
+            total_premium = premium_per_contract * max_contracts
+            return_on_capital = (total_premium / (call_strike * 100 * max_contracts)) * 100
+            
+            # Create call option data with earnings
+            result['call'] = {
+                'symbol': f"{ticker}{expiration}C{int(call_strike)}",
+                'strike': call_strike,
+                'expiration': expiration,
+                'option_type': 'CALL',
+                'bid': call_bid,
+                'ask': call_ask,
+                'last': call_last,
+                'volume': int(random.uniform(100, 5000)),
+                'open_interest': int(random.uniform(500, 20000)),
+                'implied_volatility': round(call_iv * 100, 2),  # Convert to percentage
+                'delta': round(call_delta, 5),
+                'gamma': round(0.06 * call_atm_factor, 5),
+                'theta': round(-(call_price * 0.01) / max(1, days_to_expiry), 5),
+                'vega': round(call_price * 0.1, 5),
+                'is_mock': True,
+                # Add earnings data
+                'earnings': {
+                    'max_contracts': max_contracts,
+                    'premium_per_contract': premium_per_contract,
+                    'total_premium': total_premium,
+                    'return_on_capital': return_on_capital
+                }
+            }
+        
+        if for_puts:
+            # Calculate intrinsic value for put
+            put_intrinsic = max(0, put_strike - stock_price)
+            
+            # Calculate IV with price factor for put
+            put_price_factor = 1.0 + (abs(stock_price - put_strike) / stock_price) * 0.5
+            put_iv = base_iv * put_price_factor * (1 + time_factor * 0.5)
+            
+            # Calculate extrinsic value based on IV, time, and distance from ATM
+            put_atm_factor = 1.0 - min(1.0, abs(stock_price - put_strike) / stock_price)
+            put_extrinsic = stock_price * put_iv * time_factor * put_atm_factor
+            
+            # Total option price
+            put_price = put_intrinsic + put_extrinsic
+            put_price = max(0.05, put_price)
+            
+            # Calculate delta for put
+            put_delta = -0.5
+            if stock_price < put_strike:
+                put_delta = -0.6 - (0.4 * min(1.0, (put_strike - stock_price) / put_strike))
             else:
-                delta = -0.4 * min(1.0, (strike / stock_price))
-                
-        gamma = 0.06 * atm_factor
-        theta = -option_price * 0.01 / max(1, days_to_expiry)
-        vega = option_price * 0.1
+                put_delta = -0.4 * min(1.0, (put_strike / stock_price))
+            
+            # Generate bid/ask spread
+            put_spread_factor = 0.05 + (0.15 * (1 - put_atm_factor))  # Wider spreads for further OTM options
+            put_bid = round(put_price * (1 - put_spread_factor), 2)
+            put_ask = round(put_price * (1 + put_spread_factor), 2)
+            put_last = round((put_bid + put_ask) / 2, 2)
+            
+            # Calculate put option earnings data
+            position_value = put_strike * 100 * int(position_qty / 100)  # Cash needed to secure puts
+            max_contracts = int(position_value / (put_strike * 100))
+            premium_per_contract = put_price * 100  # Premium per contract
+            total_premium = premium_per_contract * max_contracts
+            return_on_cash = (total_premium / position_value) * 100
+            
+            # Create put option data with earnings
+            result['put'] = {
+                'symbol': f"{ticker}{expiration}P{int(put_strike)}",
+                'strike': put_strike,
+                'expiration': expiration,
+                'option_type': 'PUT',
+                'bid': put_bid,
+                'ask': put_ask,
+                'last': put_last,
+                'volume': int(random.uniform(100, 5000)),
+                'open_interest': int(random.uniform(500, 20000)),
+                'implied_volatility': round(put_iv * 100, 2),  # Convert to percentage
+                'delta': round(put_delta, 5),
+                'gamma': round(0.06 * put_atm_factor, 5),
+                'theta': round(-(put_price * 0.01) / max(1, days_to_expiry), 5),
+                'vega': round(put_price * 0.1, 5),
+                'is_mock': True,
+                # Add earnings data
+                'earnings': {
+                    'max_contracts': max_contracts,
+                    'premium_per_contract': premium_per_contract,
+                    'total_premium': total_premium,
+                    'return_on_cash': return_on_cash
+                }
+            }
         
-        # Generate bid/ask spread
-        spread_factor = 0.05 + (0.15 * (1 - atm_factor))  # Wider spreads for further OTM options
-        bid = option_price * (1 - spread_factor)
-        ask = option_price * (1 + spread_factor)
-        
-        # Format values
-        bid = round(bid, 2)
-        ask = round(ask, 2)
-        last = round((bid + ask) / 2, 2)
-        
-        # Create option data dictionary
-        option_data = {
-            'symbol': f"{ticker}{expiration}{option_type}{int(strike)}",
-            'strike': strike,
-            'expiration': expiration,
-            'option_type': 'CALL' if option_type == 'C' else 'PUT',
-            'bid': bid,
-            'ask': ask,
-            'last': last,
-            'volume': int(random.uniform(100, 5000)),
-            'open_interest': int(random.uniform(500, 20000)),
-            'implied_volatility': round(iv * 100, 2),  # Convert to percentage
-            'delta': round(delta, 3),
-            'gamma': round(gamma, 3),
-            'theta': round(theta, 3),
-            'vega': round(vega, 3),
-            'is_mock': True
-        }
-        
-        return option_data
+        return result
         
     def _adjust_to_standard_strike(self, price):
         """
@@ -275,46 +363,66 @@ class OptionsService:
             # $10 increments for stocks over $250
             return round(price / 10) * 10
       
-    def get_otm_options(self, tickers=None, otm_percentage=10, for_calls=True, for_puts=True, expiration=None, monthly=False, options_only=False):
-        """
-        Get options based on OTM percentage from current price.
-        
-        Args:
-            tickers (list, optional): List of ticker symbols. If None, uses portfolio tickers.
-            otm_percentage (float, optional): Percentage OTM for option selection. Default 10%.
-            for_calls (bool, optional): Whether to fetch call options. Default True.
-            for_puts (bool, optional): Whether to fetch put options. Default True.
-            expiration (str, optional): Target expiration date in YYYY-MM-DD format. Default None.
-            monthly (bool, optional): Whether to use monthly expiration. Default False.
-            options_only (bool, optional): Whether to only fetch option data without querying stock prices. Default False.
-        
-        Returns:
-            dict: Dictionary with option data by ticker
-        """
+    def get_otm_options(self, tickers=None, otm_percentage=10):
         start_time = time.time()
-        logger.info(f"Starting OTM-based options request for {otm_percentage}% OTM")
         
-        conn = self._ensure_connection()
-        is_market_open = conn._is_market_hours()
+        # Initialize a new connection with real-time flag if needed
+        if self.connection is None or not self.connection.is_connected():
+            logger.info("Creating new real-time connection for options")
+            unique_client_id = int(time.time() % 10000) + random.randint(1000, 9999)
+            self.connection = IBConnection(
+                host=self.config.get('host', '127.0.0.1'),
+                port=self.config.get('port', 7497),
+                client_id=unique_client_id,
+                timeout=self.config.get('timeout', 20),
+                readonly=self.config.get('readonly', True),
+                real_time=True
+            )
+            logger.info(f"Attempting to connect with real-time mode with client ID {unique_client_id}")
+            connected = self.connection.connect()
+            logger.info(f"Connection attempt result: {'Connected' if connected else 'Failed'}")
+        else:
+            self._ensure_connection()
         
+        # Determine market status if not provided
+        if is_market_open is None:
+            is_market_open = self.connection._is_market_hours() if self.connection and self.connection.is_connected() else False
+            if not self.connection or not self.connection.is_connected():
+                logger.warning("Could not establish connection to market data provider")
+                is_market_open = False
+            
         # Safely get portfolio data
+        positions = {}
         try:
-            portfolio_data = conn.get_portfolio()
-            positions = portfolio_data.get('positions', {})
+            if self.connection and self.connection.is_connected():
+                logger.info("Attempting to retrieve portfolio data")
+                portfolio_data = self.connection.get_portfolio()
+                
+                positions = portfolio_data.get('positions', {})
+                logger.info(f"Portfolio has {len(positions)} positions")
+            else:
+                logger.warning("No connection available for portfolio data")
+                portfolio_data = {}
         except Exception as e:
-            logger.warning(f"Error getting portfolio data: {str(e)}")
+            logger.warning(f"Error getting portfolio data: {e}")
+            logger.warning(traceback.format_exc())
             portfolio_data = {}
-            positions = {}
         
         # If no tickers provided, get them from portfolio
         if tickers is None:
-            # Safely check if portfolio_service exists
-            if hasattr(self, 'portfolio_service') and self.portfolio_service is not None:
-                tickers = self.portfolio_service.get_portfolio_tickers()
-            else:
-                tickers = []
-     
-            
+            # First try to get tickers from positions if available
+            if positions:
+                try:
+                    tickers = [p.get('symbol') for p in positions if p.get('symbol')]
+                    logger.info(f"Using {len(tickers)} tickers from portfolio positions")
+                except Exception as e:
+                    logger.warning(f"Error extracting tickers from positions: {e}")
+                    tickers = []
+        # If no tickers and we're using mock data, provide default opportunity tickers
+        if not tickers:
+            logger.info("No tickers found, using default opportunity tickers for mock data")
+            tickers = ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOGL', 'META', 'TSLA', 'SPY']
+                
         # Determine expiration date if not provided
         if expiration is None:
             if monthly:
@@ -322,408 +430,220 @@ class OptionsService:
             else:
                 expiration_date = get_closest_friday()
             expiration = expiration_date.strftime('%Y%m%d')
+        # Process each ticker
+        result = {}
+        use_mock = False  # Flag to track if any ticker used mock data
         
-        # Process in parallel with ThreadPoolExecutor
-        if not tickers:
-            logger.warning("No tickers provided and no portfolio positions found")
-            return {'expiration': expiration, 'otm_percentage': otm_percentage, 'data': {}}
-        
-        # Only get stock prices if options_only is False
-        if not options_only:
-            logger.info("Fetching current stock prices")
-            stock_prices = conn.get_multiple_stock_prices(tickers)
-            
-            # Check for NaN or None values
-            cleaned_stock_prices = {}
-            for ticker, price in stock_prices.items():
-                if price is None or (isinstance(price, float) and math.isnan(price)):
-                    logger.warning(f"Invalid price value for {ticker}: {price}")
-                else:
-                    cleaned_stock_prices[ticker] = price
-            stock_prices = cleaned_stock_prices
-        else:
-            logger.info("Skipping stock price query (options_only=True)")
-            stock_prices = {}
-        
-        # Filter out tickers with invalid prices for market hours
-        valid_tickers = []
         for ticker in tickers:
-            if not options_only:
-                # Only validate prices if we're not skipping stock price queries
-                if ticker not in stock_prices or stock_prices[ticker] is None:
-                    if is_market_open:
-                        logger.error(f"Invalid stock price for {ticker} during market hours")
-                        raise ValueError(f"Invalid stock price for {ticker} during market hours")
-                    else:
-                        logger.info(f"Invalid stock price for {ticker} during closed market, skipping")
-                        continue
-            valid_tickers.append(ticker)
+            try:
+                ticker_data = self._process_ticker_for_otm(self.connection, ticker, otm_percentage, expiration, is_market_open)
+                result[ticker] = ticker_data
+            except Exception as e:
+                logger.error(f"Error processing {ticker} for OTM options: {e}")
+                logger.error(traceback.format_exc())
+                result[ticker] = {"error": str(e)}
         
-        if not valid_tickers:
-            if is_market_open:
-                raise ValueError("No valid stock prices during market hours")
-            else:
-                logger.info("No valid stock prices during closed market")
-                return {'expiration': expiration, 'otm_percentage': otm_percentage, 'data': {}}
+        elapsed = time.time() - start_time
+        logger.info(f"Completed OTM-based options request in {elapsed:.2f}s, real_time={self.real_time}, is_market_open={is_market_open}")
         
-        # Process tickers in parallel using ThreadPoolExecutor
-        result = {
-            'expiration': expiration,
-            'otm_percentage': otm_percentage,
-            'data': {}
+        # Ensure OTM percentage is included in the result
+        return {'data': result}
+        
+    def _process_ticker_for_otm(self, conn, ticker, otm_percentage, expiration=None, is_market_open=None):
+        """Process a single ticker for OTM options"""
+        logger.info(f"Processing {ticker} for {otm_percentage}% OTM options")
+        result = {}
+        
+        # Get stock price - either real or mock
+        stock_price = None
+        if conn and conn.is_connected() and is_market_open:
+            try:
+                logger.info(f"Attempting to get real-time stock price for {ticker}")
+                stock_data = conn.get_market_data(ticker)
+                if stock_data and isinstance(stock_data, dict):
+                    stock_price = stock_data.get('last')
+                    logger.info(f"Retrieved real-time stock price for {ticker}: ${stock_price}")
+                else:
+                    logger.warning(f"Could not get real-time stock price for {ticker}, data: {stock_data}")
+            except Exception as e:
+                logger.error(f"Error getting real-time stock price for {ticker}: {e}")
+                logger.error(traceback.format_exc())
+        
+        # If we don't have a stock price, use mock data
+        if stock_price is None or not isinstance(stock_price, (int, float)) or stock_price <= 0:
+            try:
+                logger.info(f"Getting mock stock price for {ticker}")
+                stock_data = self._get_mock_stock_data(ticker)
+                stock_price = stock_data.get('last', 0)
+                logger.info(f"Using mock stock price for {ticker}: ${stock_price}")
+            except Exception as e:
+                logger.error(f"Error getting mock stock price for {ticker}: {e}")
+                logger.error(traceback.format_exc())
+                stock_price = 100.0  # Default fallback price
+        
+        # Store stock price in result
+        result['stock_price'] = stock_price
+        
+        # Get options chain - either real or mock
+        options_data = {}
+        if conn and conn.is_connected() and is_market_open:
+            try:
+                logger.info(f"Attempting to get real-time options chain for {ticker}")
+                # Calculate target strikes
+                call_strike = round(stock_price * (1 + otm_percentage / 100), 2)
+                put_strike = round(stock_price * (1 - otm_percentage / 100), 2)
+                
+                # Adjust to standard strike increments
+                call_strike = self._adjust_to_standard_strike(call_strike)
+                put_strike = self._adjust_to_standard_strike(put_strike)
+                call_option = conn.get_option_chain(ticker, expiration,'C',call_strike);
+                put_option = conn.get_option_chain(ticker, expiration,'P',call_strike);
+                options = [call_option,put_option];
+                if call_option and put_option:
+                    logger.info(f"Successfully retrieved real-time options for {ticker}")
+            
+                    options_data = self._process_options_chain(options, ticker, stock_price, 
+                                                              otm_percentage)
+                    logger.info(f"Processed real-time options data for {ticker}")
+                else:
+                    logger.warning(f"Could not get real-time options chain for {ticker}")
+            except Exception as e:
+                logger.error(f"Error getting real-time options chain for {ticker}: {e}")
+                logger.error(traceback.format_exc())
+        
+        # If we need to use mock data
+        else:
+            try:
+                logger.info(f"Generating mock options data for {ticker} with {otm_percentage}% OTM")
+                # Both calls and puts because we filter later
+                options_data = self._generate_mock_option_data(ticker, stock_price, otm_percentage, expiration)
+                logger.info(f"Successfully generated mock options data for {ticker}")
+            except Exception as e:
+                logger.error(f"Error generating mock options data for {ticker}: {e}")
+                logger.error(traceback.format_exc())
+                options_data = {'error': str(e)}
+        
+        # Add options data to result
+        result.update(options_data)
+        
+        # Log summary of the results
+        log_msg = f"Completed processing {ticker}"
+        logger.info(log_msg)
+        
+        return result
+
+    def _get_mock_stock_data(self, ticker):
+        """Generate realistic mock stock data for a ticker"""
+        # Use realistic default prices based on ticker
+        default_prices = {
+            'AAPL': 175.0,
+            'MSFT': 410.0,
+            'GOOGL': 150.0,
+            'AMZN': 180.0,
+            'META': 480.0,
+            'TSLA': 175.0,
+            'NVDA': 880.0,
+            'AMD': 160.0,
+            'INTC': 40.0,
+            'SPY': 510.0,
+            'QQQ': 430.0,
+            'DIA': 380.0,
+            'IWM': 210.0
         }
         
-        # Process each ticker (sequentially to avoid threading issues)
-        for ticker in valid_tickers:
-            try:
-                # Process the ticker to find OTM options
-                ticker_result = self._process_ticker_for_otm(
-                    ticker, stock_prices, expiration, otm_percentage,
-                    for_calls=for_calls, for_puts=for_puts, 
-                    is_market_open=is_market_open, positions=positions, 
-                    portfolio_data=portfolio_data, options_only=options_only
-                )
-                
-                if ticker_result:
-                    result['data'][ticker] = ticker_result
-                    
-            except Exception as e:
-                logger.error(f"Error processing {ticker}: {str(e)}")
-                traceback.print_exc()
-                if is_market_open:
-                    # During market hours, we should raise exceptions
-                    raise
+        # Get base price
+        base_price = default_prices.get(ticker, 100.0)
         
-        elapsed_time = time.time() - start_time
-        logger.info(f"Completed OTM-based options request in {elapsed_time:.2f} seconds")
-        return result
+        # Add small random variation (+/- 2%)
+        variation = random.uniform(-0.02, 0.02)
+        price = base_price * (1 + variation)
         
-    def _process_ticker_for_otm(self, ticker, stock_prices, expiration, otm_percentage, 
-                                 for_calls=True, for_puts=True, is_market_open=True, 
-                                 positions=None, portfolio_data=None, options_only=False):
-        """Process a single ticker for OTM options.
+        # Round to 2 decimal places
+        price = round(price, 2)
         
-        Args:
-            ticker (str): Ticker symbol
-            stock_prices (dict): Dictionary of stock prices by ticker
-            expiration (str): Expiration date to use
-            otm_percentage (float): OTM percentage to target
-            for_calls (bool): Whether to fetch call options. Default True.
-            for_puts (bool): Whether to fetch put options. Default True.
-            is_market_open (bool): Whether the market is open.
-            positions (dict): Dictionary of positions by ticker
-            portfolio_data (dict): Dictionary of portfolio data
-            options_only (bool): Whether to only fetch option data without querying stock prices. Default False.
-        
-        Returns:
-            dict: Option data for the ticker
-        """
-        # Initialize parameters to avoid None issues
-        if positions is None:
-            positions = {}
-        if portfolio_data is None:
-            portfolio_data = {}
-        
-        try:
-            logger.info(f"Processing options for {ticker} at {otm_percentage}% OTM")
-            
-            # If options_only is True, get stock price from positions instead of querying
-            if options_only and positions and ticker in positions:
-                position = positions[ticker]
-                logger.info(f"Using position price for {ticker} (options_only=True)")
-                
-                # Extract market price based on whether positions is a dict or an object
-                if isinstance(position, dict) and 'market_price' in position:
-                    current_price = float(position['market_price'])
-                elif hasattr(position, 'market_price'):
-                    current_price = float(position.market_price)
-                else:
-                    # Try to find market price in different formats
-                    for key in ['price', 'last_price', 'current_price', 'last']:
-                        if isinstance(position, dict) and key in position:
-                            current_price = float(position[key])
-                            logger.info(f"Found price for {ticker} using key: {key}")
-                            break
-                        elif hasattr(position, key):
-                            current_price = float(getattr(position, key))
-                            logger.info(f"Found price for {ticker} using attribute: {key}")
-                            break
-                    else:
-                        logger.warning(f"No price found in position data for {ticker}, falling back to stock_prices")
-                        current_price = stock_prices.get(ticker, 0)
-            else:
-                current_price = stock_prices.get(ticker, 0)
-            
-            if not current_price > 0:
-                logger.warning(f"No valid price found for {ticker}. Using fallback method.")
-                # Use a fallback method to get price if not available
-                try:
-                    current_price = self.get_last_price(ticker)
-                    logger.info(f"Fallback price for {ticker}: {current_price}")
-                except Exception as e:
-                    logger.error(f"Failed to get fallback price for {ticker}: {str(e)}")
-                    return None
-            
-            # Make sure we have a connection
-            conn = self._ensure_connection()
-            
-            # Calculate target strikes based on OTM percentage
-            call_strike = None
-            put_strike = None
-            
-            if for_calls:
-                # For calls, OTM means strike is higher than current price
-                call_strike_raw = current_price * (1 + otm_percentage/100)
-                call_strike = self._adjust_to_standard_strike(call_strike_raw)
-                logger.info(f"Call target strike for {ticker}: {call_strike} ({otm_percentage}% OTM from {current_price})")
-                
-            if for_puts:
-                # For puts, OTM means strike is lower than current price
-                put_strike_raw = current_price * (1 - otm_percentage/100)
-                put_strike = self._adjust_to_standard_strike(put_strike_raw)
-                logger.info(f"Put target strike for {ticker}: {put_strike} ({otm_percentage}% OTM from {current_price})")
-            
-            # Get option chain with these specific strikes
-            call_option = None
-            put_option = None
-            
-            # Get call option
-            if for_calls and call_strike:
-                try:
-                    call_options = conn.get_option_chain_snapshot(
-                        ticker, 
-                        expiration, 
-                        [call_strike], 
-                        rights=['C']
-                    )
-                    
-                    if call_options and 'calls' in call_options and call_options['calls']:
-                        call_option = call_options['calls'][0]
-                        logger.info(f"Found call option for {ticker} at strike {call_strike}")
-                except Exception as e:
-                    logger.error(f"Error getting call option for {ticker}: {str(e)}")
-                    if is_market_open:
-                        raise
-            
-            # Get put option
-            if for_puts and put_strike:
-                try:
-                    put_options = conn.get_option_chain_snapshot(
-                        ticker, 
-                        expiration, 
-                        [put_strike], 
-                        rights=['P']
-                    )
-                    
-                    if put_options and 'puts' in put_options and put_options['puts']:
-                        put_option = put_options['puts'][0]
-                        logger.info(f"Found put option for {ticker} at strike {put_strike}")
-                except Exception as e:
-                    logger.error(f"Error getting put option for {ticker}: {str(e)}")
-                    if is_market_open:
-                        raise
-            
-            # Use mock data if needed
-            if is_market_open:
-                if (for_calls and not call_option) or (for_puts and not put_option):
-                    raise ValueError(f"Could not find options for {ticker} during market hours")
-            else:
-                # Generate mock data if needed outside market hours
-                stock_data = {
-                    'symbol': ticker,
-                    'last': current_price,
-                    'price': current_price,
-                    'timestamp': datetime.now().isoformat(),
-                }
-                
-                if for_calls and not call_option and call_strike:
-                    call_option = self._generate_mock_option_data(ticker, expiration, 'C', call_strike, stock_data)
-                    call_option['is_mock'] = True
-                    
-                if for_puts and not put_option and put_strike:
-                    put_option = self._generate_mock_option_data(ticker, expiration, 'P', put_strike, stock_data)
-                    put_option['is_mock'] = True
-            
-            # Get portfolio position data for this ticker
-            position_size = 0
-            avg_cost = 0
-            market_value = 0
-            unrealized_pnl = 0
-            
-            # Use the portfolio data we already retrieved
-            if ticker in positions:
-                position = positions[ticker]
-                position_size = float(position.get('shares', 0))
-                avg_cost = float(position.get('avg_cost', 0))
-                market_value = float(position.get('market_value', 0))
-                unrealized_pnl = float(position.get('unrealized_pnl', 0))
-            
-            # Calculate potential earnings
-            call_earnings = None
-            put_earnings = None
-            available_cash = 0
-            
-            # Safely extract available cash from portfolio data
-            if portfolio_data is not None and isinstance(portfolio_data, dict):
-                available_cash = portfolio_data.get('available_cash', 0)
-                if available_cash is None or (isinstance(available_cash, float) and math.isnan(available_cash)):
-                    available_cash = 0
-            
-            if call_option and position_size > 0:
-                # For covered calls (only if we own the stock)
-                max_contracts = int(position_size // 100)  # Each contract covers 100 shares
-                bid_price = call_option.get('bid', 0)
-                
-                # Check for NaN values
-                if isinstance(bid_price, float) and math.isnan(bid_price):
-                    bid_price = 0
-                    
-                premium_per_contract = float(bid_price) * 100  # Convert to dollar amount
-                total_premium = premium_per_contract * max_contracts
-                
-                # Check for division by zero or NaN
-                if max_contracts > 0 and current_price > 0:
-                    return_on_capital = (total_premium / (current_price * 100 * max_contracts)) * 100
-                else:
-                    return_on_capital = 0
-                
-                call_earnings = {
-                    'strategy': 'Covered Call',
-                    'max_contracts': max_contracts,
-                    'premium_per_contract': premium_per_contract,
-                    'total_premium': total_premium,
-                    'return_on_capital': return_on_capital
-                }
-            
-            if put_option:
-                # For cash-secured puts
-                put_strike_val = float(put_option.get('strike', 0))
-                bid_price = put_option.get('bid', 0)
-                
-                # Check for NaN values
-                if isinstance(bid_price, float) and math.isnan(bid_price):
-                    bid_price = 0
-                
-                if isinstance(put_strike_val, float) and math.isnan(put_strike_val):
-                    logger.warning(f"NaN strike price for {ticker} put option, using current price instead")
-                    put_strike_val = current_price
-                
-                safety_margin = 0.8  # Use only 80% of available funds
-                max_position_value = available_cash * safety_margin
-                
-                # Avoid division by zero and ensure valid values for calculation
-                if put_strike_val > 0:
-                    max_contracts = int(max_position_value // (put_strike_val * 100))
-                else:
-                    max_contracts = 0
-                    
-                premium_per_contract = float(bid_price) * 100  # Convert to dollar amount
-                total_premium = premium_per_contract * max_contracts
-                
-                # Check for division by zero or NaN
-                if max_contracts > 0 and put_strike_val > 0:
-                    return_on_cash = (total_premium / (put_strike_val * 100 * max_contracts)) * 100
-                else:
-                    return_on_cash = 0
-                
-                put_earnings = {
-                    'strategy': 'Cash-Secured Put',
-                    'max_contracts': max_contracts,
-                    'premium_per_contract': premium_per_contract,
-                    'total_premium': total_premium,
-                    'return_on_cash': return_on_cash
-                }
-            
-            # Build result for this ticker
-            ticker_result = {
-                'ticker': ticker,
-                'price': current_price,
-                'position': {
-                    'size': position_size,
-                    'avg_cost': avg_cost,
-                    'market_value': market_value,
-                    'unrealized_pnl': unrealized_pnl
-                }
-            }
-            
-            # Add call data if available
-            if call_option:
-                # Ensure delta value is valid
-                delta = call_option.get('delta', 0)
-                if isinstance(delta, float) and math.isnan(delta):
-                    delta = 0
-                
-                ticker_result['call'] = {
-                    'strike': float(call_option.get('strike', 0)),
-                    'bid': float(call_option.get('bid', 0) if not math.isnan(call_option.get('bid', 0)) else 0),
-                    'ask': float(call_option.get('ask', 0) if not math.isnan(call_option.get('ask', 0)) else 0),
-                    'delta': float(delta),
-                    'earnings': call_earnings,
-                    'is_mock': call_option.get('is_mock', False)
-                }
-            
-            # Add put data if available
-            if put_option:
-                # Ensure delta value is valid
-                delta = put_option.get('delta', 0)
-                if isinstance(delta, float) and math.isnan(delta):
-                    delta = 0
-                
-                ticker_result['put'] = {
-                    'strike': float(put_option.get('strike', 0)),
-                    'bid': float(put_option.get('bid', 0) if not math.isnan(put_option.get('bid', 0)) else 0),
-                    'ask': float(put_option.get('ask', 0) if not math.isnan(put_option.get('ask', 0)) else 0),
-                    'delta': float(delta),
-                    'earnings': put_earnings,
-                    'is_mock': put_option.get('is_mock', False)
-                }
-            
-            logger.info(f"Successfully processed {ticker} with {otm_percentage}% OTM options")
-            return ticker_result
-            
-        except Exception as e:
-            logger.error(f"Error processing {ticker} with OTM percentage {otm_percentage}: {str(e)}")
-            if is_market_open:
-                raise
-            return None
+        # Create mock stock data structure
+        return {
+            'symbol': ticker,
+            'last': price,
+            'bid': round(price * 0.998, 2),  # 0.2% below last
+            'ask': round(price * 1.002, 2),  # 0.2% above last
+            'volume': random.randint(100000, 10000000),
+            'open': round(price * (1 + random.uniform(-0.01, 0.01)), 2),
+            'high': round(price * (1 + random.uniform(0, 0.015)), 2),
+            'low': round(price * (1 - random.uniform(0, 0.015)), 2),
+            'close': None,  # Not applicable for current day
+            'is_mock': True
+        } 
 
-    def get_last_price(self, ticker):
+    def _process_options_chain(self, options, ticker, stock_price, otm_percentage, for_calls=True, for_puts=True):
         """
-        Get the last price for a ticker using a fallback method
+        Process options chain data and format it similar to mock data format
         
         Args:
-            ticker (str): Ticker symbol
+            options_chain (dict): Raw options chain data from IB
+            ticker (str): Stock symbol
+            stock_price (float): Current stock price
+            otm_percentage (float): OTM percentage to filter strikes
+            for_calls (bool): Whether to process call options
+            for_puts (bool): Whether to process put options
             
         Returns:
-            float: Last price for the ticker
+            dict: Formatted options data
         """
-        logger.info(f"Getting last price for {ticker} using fallback method")
-        
         try:
-            # Use a simplified approach with default prices for common tickers
-            default_prices = {
-                'AAPL': 175.0,
-                'MSFT': 320.0,
-                'AMZN': 175.0,
-                'GOOGL': 145.0,
-                'META': 468.0,
-                'TSLA': 175.0,
-                'NVDA': 850.0,
-                'JPM': 185.0,
-                'V': 270.0,
-                'WMT': 60.0
+            if not options:
+                logger.error(f"No options data available for {ticker}")
+                return None
+            
+            result = {
+                'symbol': ticker,
+                'stock_price': stock_price,
+                'otm_percentage': otm_percentage,
+                'calls': [],
+                'puts': []
             }
             
-            if ticker in default_prices:
-                price = default_prices[ticker]
-                logger.info(f"Using default price for {ticker}: {price}")
-                return price
+            # Process each option in the chain
+            for option in options:
+                # Calculate days to expiry
+                expiry_date = datetime.strptime(option['expiration'], '%Y%m%d')
+                days_to_expiry = (expiry_date - datetime.now()).days
                 
-            # If all else fails, return a default value
-            logger.warning(f"No price found for {ticker}, using default price of 100.0")
-            return 100.0
+                # Calculate ATM factor for Greeks
+                atm_factor = 1.0 - min(1.0, abs(stock_price - option['strike']) / stock_price)
+                
+                # Format option data
+                option_data = {
+                    'symbol': f"{ticker}{option['expiration']}{option['option_type'][0]}{int(option['strike'])}",
+                    'strike': option['strike'],
+                    'expiration': option['expiration'],
+                    'option_type': option['option_type'],
+                    'bid': option['bid'],
+                    'ask': option['ask'],
+                    'last': option['last'],
+                    'volume': option['volume'],
+                    'open_interest': option['open_interest'],
+                    'implied_volatility': round(option['implied_volatility'] * 100, 2),  # Convert to percentage
+                    'delta': round(option['delta'], 5),
+                    'gamma': round(0.06 * atm_factor, 5),
+                    'theta': round(-(option['last'] * 0.01) / max(1, days_to_expiry), 5),
+                    'vega': round(option['last'] * 0.1, 5),
+                    'is_mock': False
+                }
+                
+                # Add to appropriate list based on option type
+                if option['option_type'] == 'CALL' and for_calls:
+                    result['calls'].append(option_data)
+                elif option['option_type'] == 'PUT' and for_puts:
+                    result['puts'].append(option_data)
+            
+            # Sort options by strike price
+            result['calls'] = sorted(result['calls'], key=lambda x: x['strike'])
+            result['puts'] = sorted(result['puts'], key=lambda x: x['strike'])
+            
+            return result
             
         except Exception as e:
-            logger.error(f"Error getting last price for {ticker}: {str(e)}")
-            # Return a default price as a last resort
-            return 100.0 
+            logger.error(f"Error processing options chain for {ticker}: {str(e)}")
+            logger.error(traceback.format_exc())
+            return None 

@@ -327,9 +327,7 @@
                 <td>Loading...</td>
                 <td></td>
                 <td>
-                    <button class="btn btn-sm btn-outline-secondary refresh-btn" data-ticker="${ticker}">
-                        <i class="bi bi-arrow-repeat"></i>
-                    </button>
+                    <!-- Removed the redundant refresh button here -->
                 </td>
             `;
             
@@ -347,13 +345,7 @@
                 });
             }
             
-            const refreshBtn = row.querySelector('.refresh-btn');
-            if (refreshBtn) {
-                refreshBtn.addEventListener('click', function() {
-                    console.log(`Refresh button clicked for ${ticker}`);
-                    fetchOptionsForTicker(ticker);
-                });
-            }
+            // We no longer need this refresh button since we have the Refresh Data button
             
             // Add a new fetch button since we removed the original one
             const fetchBtn = document.createElement('button');
@@ -507,14 +499,19 @@
                 fetchOptionsForTicker(ticker);
             });
             
-            // Add the refresh button to the Sell Call cell
+            // Add the OTM info to the Sell Call cell and the refresh button to the Actions cell (last column)
             const fetchBtnContainer = document.createElement('div');
             fetchBtnContainer.className = 'mt-2';
             fetchBtnContainer.appendChild(refreshBtn);
             
-            if (tdElements[4].querySelector('.fetch-btn') === null) {
+            // Add OTM info to the Sell Call cell if not already present
+            if (tdElements[4].querySelector('.text-muted') === null) {
                 tdElements[4].appendChild(otmInfo);
-                tdElements[4].appendChild(fetchBtnContainer);
+            }
+            
+            // Add refresh button to the Actions column (last column - index 8)
+            if (tdElements[8] && tdElements[8].querySelector('.fetch-btn') === null) {
+                tdElements[8].appendChild(fetchBtnContainer);
             }
         }
         
@@ -561,17 +558,6 @@
                             fetchOptionsForTicker(ticker);
                         } else {
                             console.error('Fetch button clicked but no ticker attribute found');
-                        }
-                    });
-                });
-                
-                // Add event listeners to all refresh buttons
-                document.querySelectorAll('.refresh-btn').forEach(button => {
-                    button.addEventListener('click', function() {
-                        const ticker = this.getAttribute('data-ticker');
-                        if (ticker) {
-                            console.log(`Refresh button clicked for ${ticker}`);
-                            fetchOptionsForTicker(ticker);
                         }
                     });
                 });
@@ -654,11 +640,7 @@
                             <td><!-- Call Premium --></td>
                             <td><!-- Sell Put --></td>
                             <td><!-- Put Premium --></td>
-                            <td>
-                                <button class="btn btn-sm btn-outline-secondary refresh-btn" data-ticker="${ticker}">
-                                    <i class="bi bi-arrow-repeat"></i>
-                                </button>
-                            </td>
+                            <td><!-- Actions - will be filled with Refresh Data button later --></td>
                         `;
                         
                         // Add row to the table

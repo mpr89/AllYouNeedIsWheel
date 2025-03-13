@@ -256,8 +256,8 @@ class IBConnection:
         """
         if not self._ensure_connected():
             logger.error("Not connected to TWS")
-            return {}
-            
+                return {}
+        
         result = {}
         
         try:
@@ -276,7 +276,7 @@ class IBConnection:
                         # Use last or close price
                         price = ticker_data.last if ticker_data.last > 0 else ticker_data.close
                         result[ticker] = price
-                    except Exception as e:
+            except Exception as e:
                         logger.error(f"Error getting real-time price for {ticker}: {str(e)}")
             else:
                 logger.info("Using delayed prices for stock price lookup")
@@ -306,35 +306,47 @@ class IBConnection:
             logger.error(f"Error getting multiple stock prices: {str(e)}")
             return {}
     
-    def get_option_chain(self, symbol, right='C', exchange='SMART'):
+    def get_option_chain(self, symbol, expiration=None, right='C', target_strike=None, exchange='SMART'):
         """
-        Get option chain for a stock
+        Get option chain data for a stock, filtered to a specific expiration date and closest strike price
         
         Args:
             symbol (str): Stock symbol
+            expiration (str): Target expiration date in YYYYMMDD format
             right (str): Option right ('C' for call, 'P' for put)
+            target_strike (float, optional): Target strike price. If provided, returns only the option with the closest strike.
             exchange (str): Exchange
             
         Returns:
-            list: List of option contracts
+            dict: Dictionary with option chain data including market data
         """
         if not self.is_connected():
             logger.warning("Not connected to IB. Attempting to connect...")
             if not self.connect():
                 return None
             
-        # Get stock contract
-        stock = Contract()
-        stock.symbol = symbol
-        stock.secType = 'STK'
-        stock.exchange = exchange
-        stock.currency = 'USD'
+        # Get stock contract and price
+        stock = Stock(symbol, exchange, 'USD')
         
         try:
-            self.ib.qualifyContracts(stock)
+            # Qualify the stock contract
+            qualified_stocks = self.ib.qualifyContracts(stock)
+            if not qualified_stocks:
+                logger.error(f"Could not qualify stock contract for {symbol}")
+                return None
+            
+            stock_contract = qualified_stocks[0]
+            
+            # Get current stock price for reference
+            ticker = self.ib.reqMktData(stock_contract)
+            self.ib.sleep(1)  # Wait for data to arrive
+            stock_price = ticker.last if hasattr(ticker, 'last') and ticker.last > 0 else ticker.close
+            self.ib.cancelMktData(stock_contract)
+            
+            logger.info(f"Current price for {symbol}: ${stock_price}")
             
             # Request option chain
-            chains = self.ib.reqSecDefOptParams(stock.symbol, '', stock.secType, stock.conId)
+            chains = self.ib.reqSecDefOptParams(stock_contract.symbol, '', stock_contract.secType, stock_contract.conId)
             
             if not chains:
                 logger.error(f"No option chain found for {symbol}")
@@ -345,23 +357,176 @@ class IBConnection:
                 logger.error(f"No option chain found for {symbol} on exchange {exchange}")
                 return None
             
-            expirations = chain.expirations
+            # Filter available expirations if a specific one is requested
+            available_expirations = chain.expirations
+            if expiration:
+                if expiration in available_expirations:
+                    logger.info(f"Using requested expiration date: {expiration}")
+                    expirations = [expiration]
+                else:
+                    logger.warning(f"Requested expiration {expiration} not found in available expirations: {available_expirations}")
+                    # Find the closest expiration date if the requested one is not available
+                    if available_expirations:
+                        try:
+                            from datetime import datetime
+                            # Parse the requested expiration
+                            requested_date = datetime.strptime(expiration, '%Y%m%d')
+                            # Parse all available expirations
+                            exp_dates = [(exp, datetime.strptime(exp, '%Y%m%d')) for exp in available_expirations]
+                            # Find the closest expiration date
+                            closest_exp = min(exp_dates, key=lambda x: abs((x[1] - requested_date).days))
+                            logger.info(f"Using closest available expiration: {closest_exp[0]} (instead of {expiration})")
+                            expirations = [closest_exp[0]]
+                        except Exception as e:
+                            logger.error(f"Error finding closest expiration: {e}")
+                            expirations = [available_expirations[0]]
+                    else:
+                        logger.error(f"No expirations available for {symbol}")
+                        return None
+            else:
+                # If no expiration provided, use the first available one
+                if available_expirations:
+                    expirations = [available_expirations[0]]
+                    logger.info(f"No expiration specified, using first available: {expirations[0]}")
+                else:
+                    logger.error(f"No expirations available for {symbol}")
+                    return None
+            
             strikes = chain.strikes
             
+            # If target_strike is provided, find the closest strike
+            if target_strike is not None and strikes:
+                logger.info(f"Finding strike closest to {target_strike} for {symbol}")
+                closest_strike = min(strikes, key=lambda s: abs(s - target_strike))
+                logger.info(f"Selected strike {closest_strike} (from {len(strikes)} available strikes)")
+                strikes = [closest_strike]
+            
             # Build option contracts
-            options = []
-            for expiration in expirations:
+            option_contracts = []
+            for exp in expirations:
                 for strike in strikes:
-                    option = Option(symbol, expiration, strike, right, exchange)
+                    option = Option(symbol, exp, strike, right, exchange)
                     option.currency = 'USD'
                     option.multiplier = '100'  # Standard for equity options
-                    options.append(option)
+                    option_contracts.append(option)
             
-            return options
+            # Get market data for the options
+            logger.info(f"Requesting market data for {len(option_contracts)} option contracts")
+            
+            # Initialize result structure
+            result = {
+                'symbol': symbol,
+                'expiration': expirations[0],  # Just use the first one since we're filtering
+                'stock_price': stock_price,
+                'right': right,
+                'options': []
+            }
+            
+            # Request model computation for greeks
+            # Set market data type - use delayed if we don't have real-time
+            if getattr(self, 'real_time', False):
+                self.ib.reqMarketDataType(1)  # Real-time data
+            else:
+                self.ib.reqMarketDataType(3)  # Delayed data
+            
+            # Qualify and request market data for each option
+            for contract in option_contracts:
+                try:
+                    # Qualify the contract
+                    qualified_contracts = self.ib.qualifyContracts(contract)
+                    if not qualified_contracts:
+                        logger.warning(f"Could not qualify option contract: {contract.symbol} {contract.lastTradeDateOrContractMonth} {contract.strike} {contract.right}")
+                        continue
+                    
+                    qualified_contract = qualified_contracts[0]
+                    
+                    # Request market data with model computation
+                    ticker = self.ib.reqMktData(qualified_contract, '', True, False)  # Add genericTickList='Greeks' to get Greeks
+                    
+                    # Wait for data to arrive - give more time for Greeks
+                    wait_time = 2
+                    for _ in range(wait_time):
+                        self.ib.sleep(1)
+                        # Check if we have model greeks data
+                        if hasattr(ticker, 'modelGreeks') and ticker.modelGreeks:
+                            break
+                    
+                    # Extract market data
+                    bid = ticker.bid if hasattr(ticker, 'bid') and ticker.bid is not None and ticker.bid > 0 else 0
+                    ask = ticker.ask if hasattr(ticker, 'ask') and ticker.ask is not None and ticker.ask > 0 else 0
+                    last = ticker.last if hasattr(ticker, 'last') and ticker.last is not None and ticker.last > 0 else 0
+                    volume = ticker.volume if hasattr(ticker, 'volume') and ticker.volume is not None else 0
+                    open_interest = ticker.openInterest if hasattr(ticker, 'openInterest') and ticker.openInterest is not None else 0
+                    implied_vol = ticker.impliedVolatility if hasattr(ticker, 'impliedVolatility') and ticker.impliedVolatility is not None else 0
+                    
+                    # Get real delta from model greeks if available
+                    delta = None
+                    gamma = None
+                    theta = None
+                    vega = None
+                    
+                    if hasattr(ticker, 'modelGreeks') and ticker.modelGreeks:
+                        delta = ticker.modelGreeks.delta if hasattr(ticker.modelGreeks, 'delta') else None
+                        gamma = ticker.modelGreeks.gamma if hasattr(ticker.modelGreeks, 'gamma') else None
+                        theta = ticker.modelGreeks.theta if hasattr(ticker.modelGreeks, 'theta') else None
+                        vega = ticker.modelGreeks.vega if hasattr(ticker.modelGreeks, 'vega') else None
+                        
+                        logger.debug(f"Got real greeks for {contract.symbol} {contract.right} {contract.strike}: delta={delta}, gamma={gamma}, theta={theta}, vega={vega}")
+                    else:
+                        logger.debug(f"No model greeks available for {contract.symbol} {contract.right} {contract.strike}")
+                        
+                        # Fall back to estimate for delta if not available from TWS
+                        atm_factor = 1.0 - min(1.0, abs(stock_price - contract.strike) / stock_price)
+                        
+                        if contract.right == 'C':
+                            if contract.strike < stock_price:
+                                delta = 0.5 + (0.5 * atm_factor)
+                            else:
+                                delta = 0.5 * (1 - atm_factor)
+                        else:  # Put
+                            if contract.strike > stock_price:
+                                delta = -0.5 - (0.5 * atm_factor)
+                            else:
+                                delta = -0.5 * (1 - atm_factor)
+                        
+                        logger.debug(f"Using estimated delta for {contract.symbol} {contract.right} {contract.strike}: delta={delta}")
+                    
+                    # Create option data dictionary
+                    option_data = {
+                        'strike': contract.strike,
+                        'expiration': contract.lastTradeDateOrContractMonth,
+                        'option_type': 'CALL' if contract.right == 'C' else 'PUT',
+                        'bid': bid,
+                        'ask': ask,
+                        'last': last,
+                        'volume': volume,
+                        'open_interest': open_interest,
+                        'implied_volatility': implied_vol,
+                        'delta': round(delta, 3) if delta is not None else None,
+                        'gamma': round(gamma, 5) if gamma is not None else None,
+                        'theta': round(theta, 5) if theta is not None else None,
+                        'vega': round(vega, 5) if vega is not None else None
+                    }
+                    
+                    # Add to the result
+                    result['options'].append(option_data)
+                    
+                    # Cancel market data request
+                    self.ib.cancelMktData(qualified_contract)
+        
+        except Exception as e:
+                    logger.error(f"Error getting market data for option {contract.symbol} {contract.lastTradeDateOrContractMonth} {contract.strike} {contract.right}: {e}")
+                    logger.error(traceback.format_exc())
+            
+            # Sort options by strike price
+            result['options'] = sorted(result['options'], key=lambda x: x['strike'])
+            
+            return result
         except Exception as e:
             logger.error(f"Error retrieving option chain for {symbol}: {e}")
+            logger.error(traceback.format_exc())
             return None
-     
+            
     def get_option_price(self, contract):
         """
         Get the price data for an option contract
@@ -593,7 +758,7 @@ class IBConnection:
         except Exception as e:
             logger.error(f"Error getting multiple option prices: {e}")
             return {}
-    
+
     def get_portfolio(self):
         """
         Get current portfolio positions and account information from IB
@@ -934,8 +1099,8 @@ class IBConnection:
         
         logger.warning("Using MOCK PORTFOLIO DATA - showing 5000 NVDA shares and $1M cash")
         
-        return {
-            'account_id': account_id,
+            return {
+                'account_id': account_id,
             'available_cash': total_cash,
             'account_value': total_value,
             'positions': positions,
@@ -1071,190 +1236,3 @@ class IBConnection:
         else:
             # $10.00 increments for stocks over $200
             return round(strike / 10) * 10
-
-    def get_option_chain_snapshot(self, symbol, expiration, strikes, rights=['C', 'P'], exchange='SMART'):
-        """
-        Get a snapshot of option chain data for specific strikes without qualifying all contracts.
-        This is a more efficient method than qualifying all contracts individually.
-        
-        Args:
-            symbol (str): Stock symbol
-            expiration (str): Expiration date in YYYYMMDD format
-            strikes (list): List of strike prices
-            rights (list): List of rights ('C' for call, 'P' for put)
-            exchange (str): Exchange name
-            
-        Returns:
-            dict: Option chain data with calls and puts
-        """
-        logger.info(f"Creating {len(strikes) * len(rights)} option contracts for {symbol} {expiration}")
-        
-        # Initialize empty lists for results
-        calls = []
-        puts = []
-        
-        # First qualify the stock contract to get conId
-        stock_contract = Stock(symbol, exchange, 'USD')
-        qualified_stocks = self.ib.qualifyContracts(stock_contract)
-        
-        if not qualified_stocks:
-            logger.error(f"Could not qualify stock contract for {symbol}")
-            return {'calls': calls, 'puts': puts}
-        
-        stock_contract = qualified_stocks[0]
-        
-        # Create option contracts without qualifying them
-        option_contracts = []
-        contract_details = {}
-        
-        # Format the expiration date correctly (ensures IB format)
-        # Ensure expiration is in the correct format (YYYYMMDD)
-        if len(expiration) != 8:
-            logger.error(f"Invalid expiration format: {expiration}. Must be YYYYMMDD")
-            return {'calls': calls, 'puts': puts}
-
-        try:
-            # Parse and validate the date (will raise if invalid)
-            exp_year = int(expiration[0:4])
-            exp_month = int(expiration[4:6])
-            exp_day = int(expiration[6:8])
-            
-            # Validate date components
-            if not (2000 <= exp_year <= 2100 and 1 <= exp_month <= 12 and 1 <= exp_day <= 31):
-                logger.error(f"Invalid expiration date components: {exp_year}-{exp_month}-{exp_day}")
-                return {'calls': calls, 'puts': puts}
-            
-            # Create standard IB API format YYYYMMDD
-            formatted_expiration = f"{exp_year}{exp_month:02d}{exp_day:02d}"
-        except ValueError as e:
-            logger.error(f"Error parsing expiration date {expiration}: {e}")
-            return {'calls': calls, 'puts': puts}
-        
-        # Create option contracts for each strike/right combination
-        for strike in strikes:
-            for right in rights:
-                # Format strike to standard value (IB is particular about strike formats)
-                formatted_strike = self._adjust_to_standard_strike(float(strike))
-                option_right = 'C' if right.upper() == 'C' or right.upper() == 'CALL' else 'P'
-                
-                # Create contract with full specifications
-                # Note: lastTradeDateOrContractMonth must be exactly in YYYYMMDD format
-                contract = Option(
-                    symbol=symbol,
-                    lastTradeDateOrContractMonth=formatted_expiration,
-                    strike=formatted_strike,
-                    right=option_right,
-                    exchange=exchange,
-                    currency='USD',
-                    multiplier='100'  # Specify the multiplier explicitly
-                )
-                
-                option_contracts.append(contract)
-                contract_details[(strike, option_right)] = {
-                    'strike': strike,
-                    'right': right
-                }
-        
-        # Return empty result if no contracts could be created
-        if not option_contracts:
-            logger.error(f"No option contracts created for {symbol}")
-            return {'calls': calls, 'puts': puts}
-        
-        # Request market data for all contracts in a single batch
-        # This avoids the overhead of requesting data for each contract individually
-        logger.info(f"Requesting market data for {len(option_contracts)} options...")
-        
-        tickers = {}
-        ticker_by_contract = {}
-        
-        try:
-            # Request market data for all contracts at once
-            for contract in option_contracts:
-                ticker = self.ib.reqMktData(contract)
-                key = (float(contract.strike), contract.right)
-                tickers[key] = ticker
-                ticker_by_contract[id(contract)] = (key, ticker)
-            
-            # Wait for market data to be populated (3 second timeout)
-            timeout = 3  # seconds
-            start_time = time.time()
-            while time.time() - start_time < timeout:
-                self.ib.sleep(0.1)
-                all_ready = True
-                
-                for key, ticker in tickers.items():
-                    if not hasattr(ticker, 'last') or ticker.last is None:
-                        all_ready = False
-                        
-                if all_ready:
-                    break
-                
-            # Process the results
-            for (strike, right), ticker in tickers.items():
-                # Extract data from ticker
-                last = ticker.last if hasattr(ticker, 'last') and ticker.last is not None else 0
-                bid = ticker.bid if hasattr(ticker, 'bid') and ticker.bid is not None else 0
-                ask = ticker.ask if hasattr(ticker, 'ask') and ticker.ask is not None else 0
-                volume = ticker.volume if hasattr(ticker, 'volume') and ticker.volume is not None else 0
-                open_interest = ticker.openInterest if hasattr(ticker, 'openInterest') and ticker.openInterest is not None else 0
-                
-                # Calculate approximate delta based on the current stock price
-                # (This is an approximation, not the actual delta)
-                current_stock_price = self.get_stock_price(symbol)
-                if current_stock_price is None:
-                    current_stock_price = 100  # Default value if stock price not available
-                    
-                # Approximate delta calculation
-                # For calls: higher when strike is below stock price, lower when above
-                # For puts: higher (more negative) when strike is below stock price, lower when above
-                atm_factor = 1.0 - min(1.0, abs(current_stock_price - strike) / current_stock_price)
-                
-                if right == 'C':
-                    if strike < current_stock_price:
-                        delta = 0.5 + (0.5 * atm_factor)
-                    else:
-                        delta = 0.5 * (1 - atm_factor)
-                else:  # Put
-                    if strike > current_stock_price:
-                        delta = -0.5 - (0.5 * atm_factor)
-                    else:
-                        delta = -0.5 * (1 - atm_factor)
-                
-                # Create option data
-                option_data = {
-                    'symbol': f"{symbol}{expiration}{right}{int(strike)}",
-                    'strike': strike,
-                    'expiration': expiration,
-                    'option_type': 'CALL' if right == 'C' else 'PUT',
-                    'bid': bid,
-                    'ask': ask,
-                    'last': last,
-                    'volume': volume,
-                    'open_interest': open_interest,
-                    'delta': round(delta, 3),
-                    'is_mock': False
-                }
-                
-                # Add to appropriate list
-                if right == 'C':
-                    calls.append(option_data)
-                else:
-                    puts.append(option_data)
-                
-        except Exception as e:
-            logger.error(f"Error requesting market data: {str(e)}")
-            
-        finally:
-            # Cancel market data requests to free up resources
-            for contract in option_contracts:
-                try:
-                    if id(contract) in ticker_by_contract:
-                        self.ib.cancelMktData(contract)
-                except:
-                    pass
-        
-        # Return organized data
-        return {
-            'calls': sorted(calls, key=lambda x: x['strike']),
-            'puts': sorted(puts, key=lambda x: x['strike'])
-        } 
