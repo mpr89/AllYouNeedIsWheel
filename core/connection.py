@@ -196,8 +196,7 @@ class IBConnection:
             ticker = self.ib.reqMktData(qualified_contract)
             
             # Wait for market data to be received
-            wait_time = 5  # seconds
-            self.ib.sleep(wait_time)
+            self.ib.sleep(0.2)
             
             # Get the last price
             last_price = ticker.last if ticker.last else (ticker.close if ticker.close else None)
@@ -266,7 +265,7 @@ class IBConnection:
                     self.ib.reqMarketDataType(1)  # 1 = Live data
                     ticker_data = self.ib.reqMktData(stock)
                     # Wait for data to arrive
-                    self.ib.sleep(0.5)
+                    self.ib.sleep(0.2)
                     # Use last or close price
                     price = ticker_data.last if ticker_data.last > 0 else ticker_data.close
                     result[ticker] = price
@@ -313,7 +312,7 @@ class IBConnection:
             
             # Get current stock price for reference
             ticker = self.ib.reqMktData(stock_contract)
-            self.ib.sleep(1)  # Wait for data to arrive
+            self.ib.sleep(0.2)  # Wait for data to arrive
             stock_price = ticker.last if hasattr(ticker, 'last') and ticker.last > 0 else ticker.close
             self.ib.cancelMktData(stock_contract)
             
@@ -413,9 +412,9 @@ class IBConnection:
                     ticker = self.ib.reqMktData(qualified_contract, '', True, False)  # Add genericTickList='Greeks' to get Greeks
                     
                     # Wait for data to arrive - give more time for Greeks
-                    wait_time = 2
+                    wait_time = 20
                     for _ in range(wait_time):
-                        self.ib.sleep(1)
+                        self.ib.sleep(0.1)
                         # Check if we have model greeks data
                         if hasattr(ticker, 'modelGreeks') and ticker.modelGreeks:
                             break
@@ -558,11 +557,11 @@ class IBConnection:
             ticker = self.ib.reqMktData(qualified_contract)
             
             # Wait for market data to arrive (up to 5 seconds)
-            max_wait = 5  # seconds
+            max_wait = 20  # 2seconds
             logger.debug(f"Waiting up to {max_wait} seconds for option market data...")
             
             for i in range(max_wait):
-                self.ib.sleep(1)
+                self.ib.sleep(0.1)
                 # Log data for debugging purposes
                 logger.debug(f"Option data wait ({i+1}/{max_wait}): "
                              f"bid={ticker.bid if hasattr(ticker, 'bid') else None}, "
@@ -595,139 +594,7 @@ class IBConnection:
         except Exception as e:
             logger.error(f"Error getting option price: {e}")
             return None
-    
-    def get_multiple_option_prices(self, symbol, expiration, strikes, rights=None, exchange='SMART'):
-        """
-        Get option prices for multiple strikes and option types at once
-        
-        Args:
-            symbol (str): Stock symbol
-            expiration (str): Option expiration (format: YYYYMMDD)
-            strikes (list): List of strike prices
-            rights (list): List of option rights ('C' for calls, 'P' for puts, None for both)
-            exchange (str): Exchange
-            
-        Returns:
-            dict: Dictionary with strike and right as keys, option data as values
-        """
-        if not self.is_connected():
-            logger.warning("Not connected to IB. Attempting to connect...")
-            if not self.connect():
-                return {}
-                
-        if rights is None:
-            rights = ['C', 'P']  # Default to both calls and puts
-            
-        logger.info(f"Creating option contracts for {symbol} {expiration} with {len(strikes)} strikes and {len(rights)} rights")
-        
-        # Create all option contracts
-        options = []
-        for strike in strikes:
-            for right in rights:
-                option = Option(symbol, expiration, strike, right, exchange)
-                option.currency = 'USD'
-                option.multiplier = '100'  # Standard for equity options
-                options.append((strike, right, option))
-        
-        # Qualify all contracts at once
-        logger.info(f"Qualifying {len(options)} option contracts...")
-        qualified_options = []
-        results = {}
-        
-        try:
-            # Split into batches if there are many options (IB has limits)
-            batch_size = 25
-            for i in range(0, len(options), batch_size):
-                batch = options[i:i+batch_size]
-                batch_contracts = [opt[2] for opt in batch]
-                
-                # Process each contract in the batch individually to handle ambiguous contracts
-                for j, contract in enumerate(batch_contracts):
-                    strike, right, _ = batch[j]
-                    
-                    try:
-                        # Try to qualify the contract
-                        qualified = self.ib.qualifyContracts(contract)
-                        if qualified:
-                            qualified_options.append((strike, right, qualified[0]))
-                    except Exception as e:
-                        error_msg = str(e)
-                        if "ambiguous" in error_msg.lower():
-                            logger.warning(f"Ambiguous contract: {contract.symbol} {contract.lastTradeDateOrContractMonth} {contract.strike} {contract.right}")
-                            
-                            # Try to create a more specific contract
-                            try:
-                                from ib_insync import Contract
-                                # Create a full contract specification
-                                detailed_contract = Contract(
-                                    secType='OPT',
-                                    symbol=contract.symbol,
-                                    lastTradeDateOrContractMonth=contract.lastTradeDateOrContractMonth,
-                                    strike=contract.strike,
-                                    right=contract.right,
-                                    multiplier='100',  # Standard for equity options
-                                    exchange='SMART',
-                                    currency='USD'
-                                )
-                                
-                                # Try again with the detailed contract
-                                qualified = self.ib.qualifyContracts(detailed_contract)
-                                if qualified:
-                                    qualified_options.append((strike, right, qualified[0]))
-                            except Exception as inner_e:
-                                logger.warning(f"Error handling ambiguous contract: {inner_e}")
-                        else:
-                            logger.warning(f"Could not qualify contract for {contract.symbol} {contract.lastTradeDateOrContractMonth} {contract.strike} {contract.right}: {e}")
-            
-            logger.info(f"Successfully qualified {len(qualified_options)} option contracts")
-            
-            # If none of the contracts could be qualified, return empty results
-            if not qualified_options:
-                logger.error("Could not qualify any of the option contracts")
-                return {}
-                
-            # Request market data for all qualified options
-            logger.info(f"Requesting market data for {len(qualified_options)} options...")
-            tickers = {}
-            
-            # Request market data for all qualified options
-            for strike, right, contract in qualified_options:
-                ticker = self.ib.reqMktData(contract)
-                tickers[(strike, right)] = (contract, ticker)
-            
-            # Wait for data to come in
-            logger.info("Waiting for market data (5 seconds)...")
-            self.ib.sleep(5)
-            
-            # Process all the ticker data
-            for (strike, right), (contract, ticker) in tickers.items():
-                key = (strike, right)
-                
-                result = {
-                    'symbol': symbol,
-                    'expiration': expiration,
-                    'strike': strike,
-                    'right': right,
-                    'last': ticker.last,
-                    'bid': ticker.bid,
-                    'ask': ticker.ask,
-                    'volume': ticker.volume,
-                    'open_interest': ticker.open_interest if hasattr(ticker, 'open_interest') else None,
-                    'underlying': ticker.underlying if hasattr(ticker, 'underlying') else None
-                }
-                
-                results[key] = result
-                
-                # Cancel market data subscription
-                self.ib.cancelMktData(contract)
-            
-            logger.info(f"Retrieved data for {len(results)} options")
-            return results
-            
-        except Exception as e:
-            logger.error(f"Error getting multiple option prices: {e}")
-            return {}
-
+   
     def get_portfolio(self):
         """
         Get current portfolio positions and account information from IB

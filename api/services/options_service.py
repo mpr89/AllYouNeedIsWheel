@@ -361,7 +361,7 @@ class OptionsService:
             # $10 increments for stocks over $250
             return round(price / 10) * 10
       
-    def get_otm_options(self, tickers=None, otm_percentage=10):
+    def get_otm_options(self, ticker=None, otm_percentage=10):
         start_time = time.time()
         
         # Initialize a new connection with real-time flag if needed
@@ -382,38 +382,11 @@ class OptionsService:
             self._ensure_connection()
         
         is_market_open = self.connection._is_market_hours() if self.connection and self.connection.is_connected() else False
-            
-        # Safely get portfolio data
-        positions = {}
-        try:
-            if self.connection and self.connection.is_connected():
-                logger.info("Attempting to retrieve portfolio data")
-                portfolio_data = self.connection.get_portfolio()
-                
-                positions = portfolio_data.get('positions', {})
-                logger.info(f"Portfolio has {len(positions)} positions")
-            else:
-                logger.warning("No connection available for portfolio data")
-                portfolio_data = {}
-        except Exception as e:
-            logger.warning(f"Error getting portfolio data: {e}")
-            logger.warning(traceback.format_exc())
-            portfolio_data = {}
-        
         # If no tickers provided, get them from portfolio
-        if tickers is None:
-            # First try to get tickers from positions if available
-            if positions:
-                try:
-                    tickers = [p.get('symbol') for p in positions if p.get('symbol')]
-                    logger.info(f"Using {len(tickers)} tickers from portfolio positions")
-                except Exception as e:
-                    logger.warning(f"Error extracting tickers from positions: {e}")
-                    tickers = []
-        # If no tickers and we're using mock data, provide default opportunity tickers
+        tickers = [ticker]
         if not tickers:
             logger.info("No tickers found, using default opportunity tickers for mock data")
-            tickers = ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOGL', 'META', 'TSLA', 'SPY']
+            tickers = ['NVDA']
                 
         expiration = get_closest_friday().strftime('%Y%m%d')
         # Process each ticker
@@ -477,10 +450,11 @@ class OptionsService:
                 # Adjust to standard strike increments
                 call_strike = self._adjust_to_standard_strike(call_strike)
                 put_strike = self._adjust_to_standard_strike(put_strike)
+                print(ticker, expiration, 'C', call_strike)
                 call_option = conn.get_option_chain(ticker, expiration,'C',call_strike)
-                put_option = conn.get_option_chain(ticker, expiration,'P',call_strike)
-                options = [call_option,put_option]
-                if call_option and put_option:
+               
+                options = [call_option]
+                if options:
                     logger.info(f"Successfully retrieved real-time options for {ticker}")
             
                     options_data = self._process_options_chain(options, ticker, stock_price, 
@@ -556,12 +530,12 @@ class OptionsService:
             'is_mock': True
         } 
 
-    def _process_options_chain(self, options, ticker, stock_price, otm_percentage, for_calls=True, for_puts=True):
+    def _process_options_chain(self, options_chains, ticker, stock_price, otm_percentage, for_calls=True, for_puts=True):
         """
         Process options chain data and format it similar to mock data format
         
         Args:
-            options_chain (dict): Raw options chain data from IB
+            options_chains (list): List of option chain objects from IB
             ticker (str): Stock symbol
             stock_price (float): Current stock price
             otm_percentage (float): OTM percentage to filter strikes
@@ -572,9 +546,9 @@ class OptionsService:
             dict: Formatted options data
         """
         try:
-            if not options:
+            if not options_chains:
                 logger.error(f"No options data available for {ticker}")
-                return None
+                return {}
             
             result = {
                 'symbol': ticker,
@@ -584,39 +558,100 @@ class OptionsService:
                 'puts': []
             }
             
-            # Process each option in the chain
-            for option in options:
-                # Calculate days to expiry
-                expiry_date = datetime.strptime(option['expiration'], '%Y%m%d')
-                days_to_expiry = (expiry_date - datetime.now()).days
+            # Process each option chain in the list
+            for chain in options_chains:
+                # Extract the list of options from the chain
+                if not chain or 'options' not in chain:
+                    logger.warning(f"Invalid option chain format for {ticker}: {chain}")
+                    continue
                 
-                # Calculate ATM factor for Greeks
-                atm_factor = 1.0 - min(1.0, abs(stock_price - option['strike']) / stock_price)
+                options_list = chain.get('options', [])
                 
-                # Format option data
-                option_data = {
-                    'symbol': f"{ticker}{option['expiration']}{option['option_type'][0]}{int(option['strike'])}",
-                    'strike': option['strike'],
-                    'expiration': option['expiration'],
-                    'option_type': option['option_type'],
-                    'bid': option['bid'],
-                    'ask': option['ask'],
-                    'last': option['last'],
-                    'volume': option['volume'],
-                    'open_interest': option['open_interest'],
-                    'implied_volatility': round(option['implied_volatility'] * 100, 2),  # Convert to percentage
-                    'delta': round(option['delta'], 5),
-                    'gamma': round(0.06 * atm_factor, 5),
-                    'theta': round(-(option['last'] * 0.01) / max(1, days_to_expiry), 5),
-                    'vega': round(option['last'] * 0.1, 5),
-                    'is_mock': False
-                }
-                
-                # Add to appropriate list based on option type
-                if option['option_type'] == 'CALL' and for_calls:
-                    result['calls'].append(option_data)
-                elif option['option_type'] == 'PUT' and for_puts:
-                    result['puts'].append(option_data)
+                # Process each option in the chain
+                for option in options_list:
+                    try:
+                        # Calculate ATM factor for Greeks
+                        strike = option.get('strike', 0)
+                        # Handle NaN and missing values
+                        bid = option.get('bid', 0)
+                        ask = option.get('ask', 0)
+                        last = option.get('last', 0)
+                        
+                        # If last is 0 or NaN, use mid price
+                        if last == 0 or isinstance(last, float) and math.isnan(last):
+                            last = (bid + ask) / 2 if bid > 0 or ask > 0 else 0.1
+                        
+                        # Handle NaN values for Greeks
+                        iv = option.get('implied_volatility', 0)
+                        
+                        delta = option.get('delta', 0)
+                        
+                        gamma = option.get('gamma', 0)
+                        
+                        theta = option.get('theta', 0)
+                        
+                        vega = option.get('vega', 0)
+                        
+                        open_interest = option.get('open_interest', 0)
+                        
+                        # Format option data
+                        option_data = {
+                            'symbol': f"{ticker}{option.get('expiration')}{'C' if option.get('option_type') == 'CALL' else 'P'}{int(strike)}",
+                            'strike': strike,
+                            'expiration': option.get('expiration'),
+                            'option_type': option.get('option_type'),
+                            'bid': bid,
+                            'ask': ask,
+                            'last': last,
+                            'open_interest': int(open_interest),
+                            'implied_volatility': round(iv * 100, 2) if iv < 1 else round(iv, 2),  # Handle percentage vs decimal
+                            'delta': round(delta, 5),
+                            'gamma': round(gamma, 5),
+                            'theta': round(theta, 5),
+                            'vega': round(vega, 5),
+                            'is_mock': False
+                        }
+                        
+                        # Calculate earnings data
+                        if option.get('option_type') == 'CALL':
+                            position_qty = 100  # Assume 100 shares per standard position
+                            max_contracts = int(position_qty / 100)  # Each contract represents 100 shares
+                            premium_per_contract = last * 100  # Premium per contract (100 shares)
+                            total_premium = premium_per_contract * max_contracts
+                            return_on_capital = (total_premium / (strike * 100 * max_contracts)) * 100 if strike > 0 else 0
+                            
+                            # Add earnings data
+                            option_data['earnings'] = {
+                                'max_contracts': max_contracts,
+                                'premium_per_contract': premium_per_contract,
+                                'total_premium': total_premium,
+                                'return_on_capital': return_on_capital
+                            }
+                            
+                            if for_calls:
+                                result['calls'].append(option_data)
+                                
+                        elif option.get('option_type') == 'PUT':
+                            position_value = strike * 100 * int(100 / 100)  # Cash needed to secure puts
+                            max_contracts = int(position_value / (strike * 100)) if strike > 0 else 1
+                            premium_per_contract = last * 100  # Premium per contract
+                            total_premium = premium_per_contract * max_contracts
+                            return_on_cash = (total_premium / position_value) * 100 if position_value > 0 else 0
+                            
+                            # Add earnings data
+                            option_data['earnings'] = {
+                                'max_contracts': max_contracts,
+                                'premium_per_contract': premium_per_contract,
+                                'total_premium': total_premium,
+                                'return_on_cash': return_on_cash
+                            }
+                            
+                            if for_puts:
+                                result['puts'].append(option_data)
+                    
+                    except Exception as e:
+                        logger.error(f"Error processing individual option in chain for {ticker}: {str(e)}")
+                        logger.error(traceback.format_exc())
             
             # Sort options by strike price
             result['calls'] = sorted(result['calls'], key=lambda x: x['strike'])
@@ -627,4 +662,4 @@ class OptionsService:
         except Exception as e:
             logger.error(f"Error processing options chain for {ticker}: {str(e)}")
             logger.error(traceback.format_exc())
-            return None 
+            return {} 

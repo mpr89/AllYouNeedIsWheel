@@ -23,14 +23,14 @@ def otm_options():
     Get option data based on OTM percentage from current price.
     """
     # Get parameters from request
-    tickers = request.args.get('tickers')
+    ticker = request.args.get('tickers')
     otm_percentage = float(request.args.get('otm_percentage', 10))
 
     options_service = OptionsService()
     
      # Call the service with appropriate parameters
     result = options_service.get_otm_options(
-        tickers=tickers,
+        ticker=ticker,
         otm_percentage=otm_percentage
     )
     

@@ -70,7 +70,7 @@ class OptionSellerBase:
         
         # Request market data
         ticker = self.ib.reqMktData(stock)
-        self.ib.sleep(1)  # Wait for data
+        self.ib.sleep(0.2)  # Wait for data
         
         # Get the last price or midpoint
         if ticker.last > 0:

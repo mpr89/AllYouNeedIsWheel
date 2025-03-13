@@ -123,20 +123,28 @@
         // Initialize data structures
         const tickersData = {};
         
-        // Utility functions
+        // Helper function to format currency
         function formatCurrency(value) {
-            if (value === undefined || value === null) return '$0.00';
+            if (value === undefined || value === null || (typeof value === 'number' && isNaN(value))) return '$0.00';
             return '$' + parseFloat(value).toFixed(2).replace(/\d(?=(\d{3})+\.)/g, '$&,');
         }
         
-        function formatDate(dateString) {
-            const date = new Date(dateString);
-            return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+        // Helper function to format strike prices without trailing zeros
+        function formatStrike(strike) {
+            if (strike === undefined || strike === null || (typeof strike === 'number' && isNaN(strike))) return 'N/A';
+            return parseFloat(strike) === parseInt(strike) ? parseInt(strike).toString() : parseFloat(strike).toString();
         }
         
-        function formatStrike(strike) {
-            if (!strike || strike === 0) return 'N/A';
-            return formatCurrency(strike);
+        // Helper function to format dates
+        function formatDate(date) {
+            if (!date || !(date instanceof Date) || isNaN(date)) return 'Invalid Date';
+            
+            // Format as MM/DD/YYYY
+            const month = date.getMonth() + 1;
+            const day = date.getDate();
+            const year = date.getFullYear();
+            
+            return `${month}/${day}/${year}`;
         }
         
         // Fetch portfolio data
@@ -268,23 +276,35 @@
                     console.error(`HTTP error ${response.status} for ${apiUrl}`);
                     throw new Error(`HTTP error ${response.status}`);
                 }
-                return response.json();
+                // Get the response as text first to handle NaN values
+                return response.text();
             })
-            .then(data => {
-                console.log(`Received real-time data for ${ticker}:`, data);
-                
-                if (!data || !data.data || !data.data[ticker]) {
-                    console.error(`Invalid data structure received for ${ticker}`, data);
-                    throw new Error('Invalid data structure');
+            .then(text => {
+                // Replace NaN with null in the response text before parsing as JSON
+                // This fixes JSON parsing errors with NaN values
+                const cleanedText = text.replace(/:NaN/g, ':null');
+                try {
+                    const data = JSON.parse(cleanedText);
+                    console.log(`Received real-time data for ${ticker}:`, data);
+                    
+                    if (!data || !data.data || !data.data[ticker]) {
+                        console.error(`Invalid data structure received for ${ticker}`, data);
+                        throw new Error('Invalid data structure');
+                    }
+                    
+                    // Store the data
+                    tickerData.data = data;
+                    tickerData.isLoading = false;
+                    tickerData.lastUpdated = new Date();
+                    
+                    // Update UI with the data
+                    updateTickerRow(ticker, data);
+                } catch (parseError) {
+                    console.error(`JSON parsing error for ${ticker}:`, parseError);
+                    console.error('Original response text:', text);
+                    console.error('Cleaned response text:', cleanedText);
+                    throw new Error(`JSON parsing error: ${parseError.message}`);
                 }
-                
-                // Store the data
-                tickerData.data = data;
-                tickerData.isLoading = false;
-                tickerData.lastUpdated = new Date();
-                
-                // Update UI with the data
-                updateTickerRow(ticker, data);
             })
             .catch(error => {
                 console.error(`Error fetching real-time options for ${ticker}:`, error);
@@ -391,84 +411,155 @@
             let putContent = 'N/A';
             let putPremium = 'N/A';
             
-            if (option.call) {
+            // Handle the new data structure with 'calls' and 'puts' arrays
+            let callOption = null;
+            let putOption = null;
+            
+            // Extract the first call option from the calls array if it exists
+            if (option.calls && option.calls.length > 0) {
+                callOption = option.calls[0];
+            } 
+            // Fallback to the 'call' property if it exists (for backwards compatibility)
+            else if (option.call) {
+                callOption = option.call;
+            }
+            
+            // Extract the first put option from the puts array if it exists
+            if (option.puts && option.puts.length > 0) {
+                putOption = option.puts[0];
+            } 
+            // Fallback to the 'put' property if it exists (for backwards compatibility)
+            else if (option.put) {
+                putOption = option.put;
+            }
+            
+            // Process call option if available
+            if (callOption) {
                 // Show the raw bid/ask values with more decimal places to see if they're very small but non-zero
-                const callBid = option.call.bid !== undefined ? option.call.bid : 'undefined';
-                const callAsk = option.call.ask !== undefined ? option.call.ask : 'undefined';
+                const callBid = callOption.bid !== undefined ? callOption.bid : 'undefined';
+                const callAsk = callOption.ask !== undefined ? callOption.ask : 'undefined';
+                
+                // Handle NaN values safely
+                const safeCallBid = typeof callBid === 'number' && !isNaN(callBid) ? callBid : 0;
+                const safeCallAsk = typeof callAsk === 'number' && !isNaN(callAsk) ? callAsk : 0;
                 
                 // Check for very small values that might be treated as zero
-                const hasSmallBidAsk = (callBid > 0 && callBid < 0.01) || (callAsk > 0 && callAsk < 0.01);
+                const hasSmallBidAsk = (safeCallBid > 0 && safeCallBid < 0.01) || (safeCallAsk > 0 && safeCallAsk < 0.01);
                 
-                console.log(`Call raw values for ${ticker}: bid=${callBid.toFixed(6)}, ask=${callAsk.toFixed(6)}, hasSmallValues=${hasSmallBidAsk}`);
+                console.log(`Call raw values for ${ticker}: bid=${safeCallBid.toFixed(6)}, ask=${safeCallAsk.toFixed(6)}, hasSmallValues=${hasSmallBidAsk}`);
                 
-                callContent = formatStrike(option.call.strike) + (option.call.delta ? ` (δ=${option.call.delta.toFixed(2)})` : '');
+                const safeStrike = callOption.strike !== undefined && !isNaN(callOption.strike) ? callOption.strike : 0;
+                const safeDelta = callOption.delta !== undefined && !isNaN(callOption.delta) ? callOption.delta : null;
+                
+                callContent = formatStrike(safeStrike) + (safeDelta ? ` (δ=${safeDelta.toFixed(2)})` : '');
                 
                 // Log call earnings data
-                console.log(`Call earnings for ${ticker}:`, option.call.earnings);
+                console.log(`Call earnings for ${ticker}:`, callOption.earnings);
                 
-                if (option.call.earnings) {
-                    const e = option.call.earnings;
+                if (callOption.earnings) {
+                    const e = callOption.earnings;
+                    
+                    // Safely extract values, handling NaN
+                    const premiumPerContract = e.premium_per_contract !== undefined && !isNaN(e.premium_per_contract) ? e.premium_per_contract : 0;
+                    const totalPremium = e.total_premium !== undefined && !isNaN(e.total_premium) ? e.total_premium : 0;
+                    const returnOnCapital = e.return_on_capital !== undefined && !isNaN(e.return_on_capital) ? e.return_on_capital : 0;
+                    const maxContracts = e.max_contracts !== undefined && !isNaN(e.max_contracts) ? e.max_contracts : 0;
                     
                     // Show raw premium value with more decimal places
-                    const rawPremium = e.premium_per_contract !== undefined ? e.premium_per_contract : 'undefined';
-                    console.log(`Call premium raw value for ${ticker}: ${rawPremium.toFixed(6)}`);
+                    console.log(`Call premium raw value for ${ticker}: ${premiumPerContract.toFixed(6)}`);
                     
                     // Check if we actually have valid premium values
-                    if (e.premium_per_contract > 0 && e.total_premium > 0) {
-                        callPremium = `${e.max_contracts} × ${formatCurrency(e.premium_per_contract)} = ${formatCurrency(e.total_premium)} (${e.return_on_capital.toFixed(2)}%)`;
+                    if (premiumPerContract > 0 && totalPremium > 0) {
+                        callPremium = `${maxContracts} × ${formatCurrency(premiumPerContract)} = ${formatCurrency(totalPremium)} (${returnOnCapital.toFixed(2)}%)`;
                     } else {
                         // Show exact bid/ask values with more decimal places
                         callPremium = `<span class="text-muted">No premium available</span><br>
-                            <small class="text-muted">Bid: ${callBid.toFixed(6)}, Ask: ${callAsk.toFixed(6)}</small>
+                            <small class="text-muted">Bid: ${safeCallBid.toFixed(6)}, Ask: ${safeCallAsk.toFixed(6)}</small>
                             ${hasSmallBidAsk ? '<br><small class="text-warning">⚠️ Very small values detected</small>' : ''}`;
                     }
                 } else {
                     callPremium = `<span class="text-muted">No earnings data available</span><br>
-                        <small class="text-muted">Bid: ${callBid.toFixed(6)}, Ask: ${callAsk.toFixed(6)}</small>
+                        <small class="text-muted">Bid: ${safeCallBid.toFixed(6)}, Ask: ${safeCallAsk.toFixed(6)}</small>
                         ${hasSmallBidAsk ? '<br><small class="text-warning">⚠️ Very small values detected</small>' : ''}`;
                 }
             }
             
-            if (option.put) {
+            // Process put option if available
+            if (putOption) {
                 // Show the raw bid/ask values with more decimal places to see if they're very small but non-zero
-                const putBid = option.put.bid !== undefined ? option.put.bid : 'undefined';
-                const putAsk = option.put.ask !== undefined ? option.put.ask : 'undefined';
+                const putBid = putOption.bid !== undefined ? putOption.bid : 'undefined';
+                const putAsk = putOption.ask !== undefined ? putOption.ask : 'undefined';
+                
+                // Handle NaN values safely
+                const safePutBid = typeof putBid === 'number' && !isNaN(putBid) ? putBid : 0;
+                const safePutAsk = typeof putAsk === 'number' && !isNaN(putAsk) ? putAsk : 0;
                 
                 // Check for very small values that might be treated as zero
-                const hasSmallBidAsk = (putBid > 0 && putBid < 0.01) || (putAsk > 0 && putAsk < 0.01);
+                const hasSmallBidAsk = (safePutBid > 0 && safePutBid < 0.01) || (safePutAsk > 0 && safePutAsk < 0.01);
                 
-                console.log(`Put raw values for ${ticker}: bid=${putBid.toFixed(6)}, ask=${putAsk.toFixed(6)}, hasSmallValues=${hasSmallBidAsk}`);
+                console.log(`Put raw values for ${ticker}: bid=${safePutBid.toFixed(6)}, ask=${safePutAsk.toFixed(6)}, hasSmallValues=${hasSmallBidAsk}`);
                 
-                putContent = formatStrike(option.put.strike) + (option.put.delta ? ` (δ=${option.put.delta.toFixed(2)})` : '');
+                const safeStrike = putOption.strike !== undefined && !isNaN(putOption.strike) ? putOption.strike : 0;
+                const safeDelta = putOption.delta !== undefined && !isNaN(putOption.delta) ? putOption.delta : null;
+                
+                putContent = formatStrike(safeStrike) + (safeDelta ? ` (δ=${safeDelta.toFixed(2)})` : '');
                 
                 // Log put earnings data
-                console.log(`Put earnings for ${ticker}:`, option.put.earnings);
+                console.log(`Put earnings for ${ticker}:`, putOption.earnings);
                 
-                if (option.put.earnings) {
-                    const e = option.put.earnings;
+                if (putOption.earnings) {
+                    const e = putOption.earnings;
+                    
+                    // Safely extract values, handling NaN
+                    const premiumPerContract = e.premium_per_contract !== undefined && !isNaN(e.premium_per_contract) ? e.premium_per_contract : 0;
+                    const totalPremium = e.total_premium !== undefined && !isNaN(e.total_premium) ? e.total_premium : 0;
+                    const returnOnCash = e.return_on_cash !== undefined && !isNaN(e.return_on_cash) ? e.return_on_cash : 0;
+                    const maxContracts = e.max_contracts !== undefined && !isNaN(e.max_contracts) ? e.max_contracts : 0;
                     
                     // Show raw premium value with more decimal places
-                    const rawPremium = e.premium_per_contract !== undefined ? e.premium_per_contract : 'undefined';
-                    console.log(`Put premium raw value for ${ticker}: ${rawPremium.toFixed(6)}`);
+                    console.log(`Put premium raw value for ${ticker}: ${premiumPerContract.toFixed(6)}`);
                     
                     // Check if we actually have valid premium values
-                    if (e.premium_per_contract > 0 && e.total_premium > 0) {
-                        putPremium = `${e.max_contracts} × ${formatCurrency(e.premium_per_contract)} = ${formatCurrency(e.total_premium)} (${e.return_on_cash.toFixed(2)}%)`;
+                    if (premiumPerContract > 0 && totalPremium > 0) {
+                        putPremium = `${maxContracts} × ${formatCurrency(premiumPerContract)} = ${formatCurrency(totalPremium)} (${returnOnCash.toFixed(2)}%)`;
                     } else {
                         // Show exact bid/ask values with more decimal places
                         putPremium = `<span class="text-muted">No premium available</span><br>
-                            <small class="text-muted">Bid: ${putBid.toFixed(6)}, Ask: ${putAsk.toFixed(6)}</small>
+                            <small class="text-muted">Bid: ${safePutBid.toFixed(6)}, Ask: ${safePutAsk.toFixed(6)}</small>
                             ${hasSmallBidAsk ? '<br><small class="text-warning">⚠️ Very small values detected</small>' : ''}`;
                     }
                 } else {
                     putPremium = `<span class="text-muted">No earnings data available</span><br>
-                        <small class="text-muted">Bid: ${putBid.toFixed(6)}, Ask: ${putAsk.toFixed(6)}</small>
+                        <small class="text-muted">Bid: ${safePutBid.toFixed(6)}, Ask: ${safePutAsk.toFixed(6)}</small>
                         ${hasSmallBidAsk ? '<br><small class="text-warning">⚠️ Very small values detected</small>' : ''}`;
                 }
             }
             
             // Show expiration date from the data
-            const expirationDate = data.expiration ? new Date(data.expiration) : null;
+            let expirationDate = null;
+            
+            // Try to get expiration date from various sources
+            if (option.expiration) {
+                // Direct expiration property
+                expirationDate = new Date(option.expiration);
+            } else if (callOption && callOption.expiration) {
+                // From call option
+                const expStr = callOption.expiration;
+                expirationDate = new Date(
+                    expStr.substring(0, 4) + '-' + 
+                    expStr.substring(4, 6) + '-' + 
+                    expStr.substring(6, 8)
+                );
+            } else if (putOption && putOption.expiration) {
+                // From put option
+                const expStr = putOption.expiration;
+                expirationDate = new Date(
+                    expStr.substring(0, 4) + '-' + 
+                    expStr.substring(4, 6) + '-' + 
+                    expStr.substring(6, 8)
+                );
+            }
+            
             const expirationText = expirationDate ? 
                 `<small class="text-muted">Exp: ${formatDate(expirationDate)}</small>` : 
                 '';
@@ -488,7 +579,7 @@
             // Add OTM information
             const otmInfo = document.createElement('div');
             otmInfo.className = 'mt-2';
-            otmInfo.innerHTML = `<small class="text-muted">Using OTM: ${data.otm_percentage}%</small>`;
+            otmInfo.innerHTML = `<small class="text-muted">Using OTM: ${option.otm_percentage || tickersData[ticker].otmPercentage}%</small>`;
             
             // Add a data refresh button after options are loaded
             const refreshBtn = document.createElement('button');
@@ -701,16 +792,42 @@
                     return;
                 }
                 console.log('Real-time API test successful!');
-                return response.json();
+                // Get the response as text first to handle NaN values
+                return response.text();
             })
-            .then(data => {
-                if (data) {
+            .then(text => {
+                if (!text) return;
+                
+                // Replace NaN with null in the response text before parsing as JSON
+                const cleanedText = text.replace(/:NaN/g, ':null');
+                try {
+                    const data = JSON.parse(cleanedText);
                     console.log('Sample real-time data received:', data);
+                    
                     // Check for the presence of bid/ask values
-                    if (data.data && data.data.AAPL && data.data.AAPL.call) {
-                        const call = data.data.AAPL.call;
-                        console.log('AAPL call bid/ask:', call.bid, call.ask);
+                    if (data.data && data.data.AAPL) {
+                        const appleData = data.data.AAPL;
+                        
+                        // Try to extract call data from either 'call' property or first item in 'calls' array
+                        let callOption = null;
+                        if (appleData.calls && appleData.calls.length > 0) {
+                            callOption = appleData.calls[0];
+                            console.log('AAPL call found in calls array:', callOption);
+                        } else if (appleData.call) {
+                            callOption = appleData.call;
+                            console.log('AAPL call found in call property:', callOption);
+                        }
+                        
+                        if (callOption) {
+                            console.log('AAPL call bid/ask:', callOption.bid, callOption.ask);
+                        } else {
+                            console.log('No call option data found for AAPL');
+                        }
                     }
+                } catch (parseError) {
+                    console.error('JSON parsing error in test endpoint:', parseError);
+                    console.error('Original response text:', text);
+                    console.error('Cleaned response text:', cleanedText);
                 }
             })
             .catch(error => {
