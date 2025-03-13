@@ -101,8 +101,7 @@ class PortfolioService:
                 'cash_balance': portfolio_data.get('available_cash', 0),
                 'positions_count': len(positions),
                 'unrealized_pnl': unrealized_pnl,
-                'realized_pnl': realized_pnl,
-                'is_mock': portfolio_data.get('is_mock', False)
+                'realized_pnl': realized_pnl
             }
             
             return result
@@ -156,8 +155,7 @@ class PortfolioService:
                             'unrealized_pnl': float(pos.unrealizedPNL),
                             'realized_pnl': float(pos.realizedPNL),
                             'account_name': portfolio_data.get('account_id', 'Unknown'),
-                            'security_type': pos.contract.secType,
-                            'is_mock': portfolio_data.get('is_mock', False)
+                            'security_type': pos.contract.secType
                         }
                     else:  # This is our dictionary format
                         position_data = {
@@ -169,8 +167,7 @@ class PortfolioService:
                             'unrealized_pnl': float(pos.get('unrealized_pnl', 0)),
                             'realized_pnl': float(pos.get('realized_pnl', 0)),
                             'account_name': portfolio_data.get('account_id', 'Unknown'),
-                            'security_type': 'STK',  # Default to stock
-                            'is_mock': portfolio_data.get('is_mock', False)
+                            'security_type': 'STK'
                         }
                     
                     result.append(position_data)

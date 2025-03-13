@@ -26,7 +26,7 @@ def otm_options():
     tickers = request.args.get('tickers')
     otm_percentage = float(request.args.get('otm_percentage', 10))
 
-    options_service = OptionsService(real_time=use_real_time)
+    options_service = OptionsService()
     
      # Call the service with appropriate parameters
     result = options_service.get_otm_options(

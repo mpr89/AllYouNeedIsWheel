@@ -40,14 +40,12 @@ class OptionsService:
                 unique_client_id = int(time.time() % 10000) + random.randint(1000, 9999)
                 logger.info(f"Creating new TWS connection with client ID: {unique_client_id}")
                 
-                # Create new connection with real_time flag if specified
                 self.connection = IBConnection(
                     host=self.config.get('host', '127.0.0.1'),
                     port=self.config.get('port', 7497),
                     client_id=unique_client_id,  # Use the unique client ID instead of fixed ID 1
                     timeout=self.config.get('timeout', 20),
-                    readonly=self.config.get('readonly', True),
-                    real_time=getattr(self, 'real_time', False)  # Pass real_time parameter if it exists
+                    readonly=self.config.get('readonly', True)
                 )
                 
                 # Try to connect with proper error handling
@@ -375,8 +373,7 @@ class OptionsService:
                 port=self.config.get('port', 7497),
                 client_id=unique_client_id,
                 timeout=self.config.get('timeout', 20),
-                readonly=self.config.get('readonly', True),
-                real_time=True
+                readonly=self.config.get('readonly', True)
             )
             logger.info(f"Attempting to connect with real-time mode with client ID {unique_client_id}")
             connected = self.connection.connect()
@@ -384,12 +381,7 @@ class OptionsService:
         else:
             self._ensure_connection()
         
-        # Determine market status if not provided
-        if is_market_open is None:
-            is_market_open = self.connection._is_market_hours() if self.connection and self.connection.is_connected() else False
-            if not self.connection or not self.connection.is_connected():
-                logger.warning("Could not establish connection to market data provider")
-                is_market_open = False
+        is_market_open = self.connection._is_market_hours() if self.connection and self.connection.is_connected() else False
             
         # Safely get portfolio data
         positions = {}
@@ -423,16 +415,9 @@ class OptionsService:
             logger.info("No tickers found, using default opportunity tickers for mock data")
             tickers = ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOGL', 'META', 'TSLA', 'SPY']
                 
-        # Determine expiration date if not provided
-        if expiration is None:
-            if monthly:
-                expiration_date = get_next_monthly_expiration()
-            else:
-                expiration_date = get_closest_friday()
-            expiration = expiration_date.strftime('%Y%m%d')
+        expiration = get_closest_friday().strftime('%Y%m%d')
         # Process each ticker
         result = {}
-        use_mock = False  # Flag to track if any ticker used mock data
         
         for ticker in tickers:
             try:
@@ -444,7 +429,7 @@ class OptionsService:
                 result[ticker] = {"error": str(e)}
         
         elapsed = time.time() - start_time
-        logger.info(f"Completed OTM-based options request in {elapsed:.2f}s, real_time={self.real_time}, is_market_open={is_market_open}")
+        logger.info(f"Completed OTM-based options request in {elapsed:.2f}s, is_market_open={is_market_open}")
         
         # Ensure OTM percentage is included in the result
         return {'data': result}
@@ -459,12 +444,8 @@ class OptionsService:
         if conn and conn.is_connected() and is_market_open:
             try:
                 logger.info(f"Attempting to get real-time stock price for {ticker}")
-                stock_data = conn.get_market_data(ticker)
-                if stock_data and isinstance(stock_data, dict):
-                    stock_price = stock_data.get('last')
-                    logger.info(f"Retrieved real-time stock price for {ticker}: ${stock_price}")
-                else:
-                    logger.warning(f"Could not get real-time stock price for {ticker}, data: {stock_data}")
+                stock_price = conn.get_stock_price(ticker)
+                logger.info(f"Retrieved real-time stock price for {ticker}: ${stock_price}")
             except Exception as e:
                 logger.error(f"Error getting real-time stock price for {ticker}: {e}")
                 logger.error(traceback.format_exc())
@@ -496,9 +477,9 @@ class OptionsService:
                 # Adjust to standard strike increments
                 call_strike = self._adjust_to_standard_strike(call_strike)
                 put_strike = self._adjust_to_standard_strike(put_strike)
-                call_option = conn.get_option_chain(ticker, expiration,'C',call_strike);
-                put_option = conn.get_option_chain(ticker, expiration,'P',call_strike);
-                options = [call_option,put_option];
+                call_option = conn.get_option_chain(ticker, expiration,'C',call_strike)
+                put_option = conn.get_option_chain(ticker, expiration,'P',call_strike)
+                options = [call_option,put_option]
                 if call_option and put_option:
                     logger.info(f"Successfully retrieved real-time options for {ticker}")
             

@@ -54,7 +54,7 @@ class IBConnection:
     """
     Class for managing connection to Interactive Brokers
     """
-    def __init__(self, host='127.0.0.1', port=7497, client_id=1, timeout=20, readonly=True, real_time=False):
+    def __init__(self, host='127.0.0.1', port=7497, client_id=1, timeout=20, readonly=True):
         """
         Initialize the IB connection
         
@@ -64,14 +64,12 @@ class IBConnection:
             client_id (int): Client ID for TWS/IB Gateway
             timeout (int): Connection timeout in seconds
             readonly (bool): Whether to connect in readonly mode
-            real_time (bool): Whether to request real-time data
         """
         self.host = host
         self.port = port
         self.client_id = client_id
         self.timeout = timeout
         self.readonly = readonly
-        self.real_time = real_time
         self.ib = IB()
         self._connected = False
         
@@ -256,48 +254,24 @@ class IBConnection:
         """
         if not self._ensure_connected():
             logger.error("Not connected to TWS")
-                return {}
+            return {}
         
         result = {}
         
         try:
-            # Use real-time prices if requested, otherwise use delayed prices
-            if getattr(self, 'real_time', False):
-                logger.info("Using real-time prices for stock price lookup")
-                # For real-time prices, we need to request them one by one
-                for ticker in tickers:
-                    try:
-                        stock = Stock(ticker, 'SMART', 'USD')
-                        self.ib.qualifyContracts(stock)
-                        self.ib.reqMarketDataType(1)  # 1 = Live data
-                        ticker_data = self.ib.reqMktData(stock)
-                        # Wait for data to arrive
-                        self.ib.sleep(0.5)
-                        # Use last or close price
-                        price = ticker_data.last if ticker_data.last > 0 else ticker_data.close
-                        result[ticker] = price
-            except Exception as e:
-                        logger.error(f"Error getting real-time price for {ticker}: {str(e)}")
-            else:
-                logger.info("Using delayed prices for stock price lookup")
-                # For delayed prices, we can batch the requests
-                stocks = [Stock(ticker, 'SMART', 'USD') for ticker in tickers]
-                self.ib.qualifyContracts(*stocks)
-                self.ib.reqMarketDataType(3)  # 3 = Delayed data
-                
-                # Request market data for all stocks
-                ticker_objects = [self.ib.reqMktData(stock) for stock in stocks]
-                
-                # Wait for data to arrive
-                self.ib.sleep(2)
-                
-                # Process the results
-                for i, ticker_obj in enumerate(ticker_objects):
-                    ticker = tickers[i]
+            for ticker in tickers:
+                try:
+                    stock = Stock(ticker, 'SMART', 'USD')
+                    self.ib.qualifyContracts(stock)
+                    self.ib.reqMarketDataType(1)  # 1 = Live data
+                    ticker_data = self.ib.reqMktData(stock)
+                    # Wait for data to arrive
+                    self.ib.sleep(0.5)
                     # Use last or close price
-                    price = ticker_obj.last if ticker_obj.last > 0 else ticker_obj.close
+                    price = ticker_data.last if ticker_data.last > 0 else ticker_data.close
                     result[ticker] = price
-            
+                except Exception as e:
+                        logger.error(f"Error getting real-time price for {ticker}: {str(e)}")
             # Cancel all market data requests
             self.ib.cancelMktData()
             
@@ -422,12 +396,7 @@ class IBConnection:
                 'options': []
             }
             
-            # Request model computation for greeks
-            # Set market data type - use delayed if we don't have real-time
-            if getattr(self, 'real_time', False):
-                self.ib.reqMarketDataType(1)  # Real-time data
-            else:
-                self.ib.reqMarketDataType(3)  # Delayed data
+            self.ib.reqMarketDataType(1)
             
             # Qualify and request market data for each option
             for contract in option_contracts:
@@ -514,7 +483,7 @@ class IBConnection:
                     # Cancel market data request
                     self.ib.cancelMktData(qualified_contract)
         
-        except Exception as e:
+                except Exception as e:
                     logger.error(f"Error getting market data for option {contract.symbol} {contract.lastTradeDateOrContractMonth} {contract.strike} {contract.right}: {e}")
                     logger.error(traceback.format_exc())
             
@@ -830,13 +799,13 @@ class IBConnection:
                     logger.info("No positions found during closed market. Using mock portfolio data.")
                     return self._generate_mock_portfolio()
             
-                return {
-                    'account_id': account_id,
-                    'available_cash': account_info.get('available_cash', 0),
-                    'account_value': account_info.get('account_value', 0),
-                'positions': positions,
-                'is_mock': False
-            }
+            return {
+                'account_id': account_id,
+                'available_cash': account_info.get('available_cash', 0),
+                'account_value': account_info.get('account_value', 0),
+            'positions': positions,
+            'is_mock': False
+        }
         
         except Exception as e:
             if is_market_open:
@@ -1099,8 +1068,8 @@ class IBConnection:
         
         logger.warning("Using MOCK PORTFOLIO DATA - showing 5000 NVDA shares and $1M cash")
         
-            return {
-                'account_id': account_id,
+        return {
+            'account_id': account_id,
             'available_cash': total_cash,
             'account_value': total_value,
             'positions': positions,
