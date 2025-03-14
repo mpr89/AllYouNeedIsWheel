@@ -173,7 +173,12 @@ class OptionsService:
         max_contracts = int(position_qty / 100)  # Each contract represents 100 shares
         premium_per_contract = call_price * 100  # Premium per contract (100 shares)
         total_premium = premium_per_contract * max_contracts
-        return_on_capital = (total_premium / (call_strike * 100 * max_contracts)) * 100
+        
+        # Ensure we don't divide by zero or NaN
+        if call_strike > 0 and max_contracts > 0:
+            return_on_capital = (total_premium / (call_strike * 100 * max_contracts)) * 100
+        else:
+            return_on_capital = 0
         
         # Create call option data with earnings
         result['call'] = {
@@ -195,9 +200,9 @@ class OptionsService:
             # Add earnings data
             'earnings': {
                 'max_contracts': max_contracts,
-                'premium_per_contract': premium_per_contract,
-                'total_premium': total_premium,
-                'return_on_capital': return_on_capital
+                'premium_per_contract': round(premium_per_contract, 2),
+                'total_premium': round(total_premium, 2),
+                'return_on_capital': round(return_on_capital, 2)
             }
         }
         
@@ -231,10 +236,15 @@ class OptionsService:
         
         # Calculate put option earnings data
         position_value = put_strike * 100 * int(position_qty / 100)  # Cash needed to secure puts
-        max_contracts = int(position_value / (put_strike * 100))
+        max_contracts = 1 if put_strike <= 0 else int(position_value / (put_strike * 100))
         premium_per_contract = put_price * 100  # Premium per contract
         total_premium = premium_per_contract * max_contracts
-        return_on_cash = (total_premium / position_value) * 100
+        
+        # Ensure we don't divide by zero or NaN
+        if position_value > 0:
+            return_on_cash = (total_premium / position_value) * 100
+        else:
+            return_on_cash = 0
         
         # Create put option data with earnings
         result['put'] = {
@@ -256,9 +266,9 @@ class OptionsService:
             # Add earnings data
             'earnings': {
                 'max_contracts': max_contracts,
-                'premium_per_contract': premium_per_contract,
-                'total_premium': total_premium,
-                'return_on_cash': return_on_cash
+                'premium_per_contract': round(premium_per_contract, 2),
+                'total_premium': round(total_premium, 2),
+                'return_on_cash': round(return_on_cash, 2)
             }
         }
     
@@ -498,16 +508,28 @@ class OptionsService:
                         
                         # Handle NaN values for Greeks
                         iv = option.get('implied_volatility', 0)
+                        if isinstance(iv, float) and math.isnan(iv):
+                            iv = 0
                         
                         delta = option.get('delta', 0)
+                        if isinstance(delta, float) and math.isnan(delta):
+                            delta = 0
                         
                         gamma = option.get('gamma', 0)
+                        if isinstance(gamma, float) and math.isnan(gamma):
+                            gamma = 0
                         
                         theta = option.get('theta', 0)
+                        if isinstance(theta, float) and math.isnan(theta):
+                            theta = 0
                         
                         vega = option.get('vega', 0)
+                        if isinstance(vega, float) and math.isnan(vega):
+                            vega = 0
                         
                         open_interest = option.get('open_interest', 0)
+                        if isinstance(open_interest, float) and math.isnan(open_interest):
+                            open_interest = 0
                         
                         # Format option data
                         option_data = {
@@ -519,7 +541,7 @@ class OptionsService:
                             'ask': ask,
                             'last': last,
                             'open_interest': int(open_interest),
-                            'implied_volatility': round(iv * 100, 2) if iv < 1 else round(iv, 2),  # Handle percentage vs decimal
+                            'implied_volatility': round(iv * 100, 2) if iv < 1 and iv > 0 else round(iv, 2),  # Handle percentage vs decimal
                             'delta': round(delta, 5),
                             'gamma': round(gamma, 5),
                             'theta': round(theta, 5),
@@ -533,14 +555,19 @@ class OptionsService:
                             max_contracts = int(position_qty / 100)  # Each contract represents 100 shares
                             premium_per_contract = last * 100  # Premium per contract (100 shares)
                             total_premium = premium_per_contract * max_contracts
-                            return_on_capital = (total_premium / (strike * 100 * max_contracts)) * 100 if strike > 0 else 0
+                            
+                            # Ensure we don't divide by zero or NaN
+                            if strike > 0 and max_contracts > 0:
+                                return_on_capital = (total_premium / (strike * 100 * max_contracts)) * 100
+                            else:
+                                return_on_capital = 0
                             
                             # Add earnings data
                             option_data['earnings'] = {
                                 'max_contracts': max_contracts,
-                                'premium_per_contract': premium_per_contract,
-                                'total_premium': total_premium,
-                                'return_on_capital': return_on_capital
+                                'premium_per_contract': round(premium_per_contract, 2),
+                                'total_premium': round(total_premium, 2),
+                                'return_on_capital': round(return_on_capital, 2)
                             }
                             
                             # Add to calls list directly
@@ -548,17 +575,22 @@ class OptionsService:
                             
                         elif option.get('option_type') == 'PUT':
                             position_value = strike * 100 * int(100 / 100)  # Cash needed to secure puts
-                            max_contracts = int(position_value / (strike * 100))
+                            max_contracts = 1 if strike <= 0 else int(position_value / (strike * 100))
                             premium_per_contract = last * 100  # Premium per contract
                             total_premium = premium_per_contract * max_contracts
-                            return_on_cash = (total_premium / position_value) * 100 if position_value > 0 else 0
+                            
+                            # Ensure we don't divide by zero or NaN
+                            if position_value > 0:
+                                return_on_cash = (total_premium / position_value) * 100
+                            else:
+                                return_on_cash = 0
                             
                             # Add earnings data
                             option_data['earnings'] = {
                                 'max_contracts': max_contracts,
-                                'premium_per_contract': premium_per_contract,
-                                'total_premium': total_premium,
-                                'return_on_cash': return_on_cash
+                                'premium_per_contract': round(premium_per_contract, 2),
+                                'total_premium': round(total_premium, 2),
+                                'return_on_cash': round(return_on_cash, 2)
                             }
                             
                             # Add to puts list directly
@@ -572,9 +604,43 @@ class OptionsService:
             result['calls'] = sorted(result['calls'], key=lambda x: x['strike'])
             result['puts'] = sorted(result['puts'], key=lambda x: x['strike'])
             
+            # Final sanitization to ensure no NaN values exist in the result
+            self._sanitize_result(result)
+            
             return result
             
         except Exception as e:
             logger.error(f"Error processing options chain for {ticker}: {str(e)}")
             logger.error(traceback.format_exc())
             return {} 
+
+    def _sanitize_result(self, result):
+        """
+        Sanitize the result dictionary by replacing any NaN values with 0
+        
+        Args:
+            result (dict): The result dictionary to sanitize
+        """
+        if not result or not isinstance(result, dict):
+            return
+            
+        # Helper function to recursively sanitize dictionaries
+        def sanitize_dict(d):
+            if not isinstance(d, dict):
+                return
+                
+            for key, value in d.items():
+                # Check if value is NaN
+                if isinstance(value, float) and math.isnan(value):
+                    d[key] = 0
+                # Recursively sanitize nested dictionaries
+                elif isinstance(value, dict):
+                    sanitize_dict(value)
+                # Sanitize items in lists
+                elif isinstance(value, list):
+                    for item in value:
+                        if isinstance(item, dict):
+                            sanitize_dict(item)
+        
+        # Sanitize the entire result dictionary
+        sanitize_dict(result) 
