@@ -75,7 +75,7 @@ class OptionsService:
                 logger.error("Asyncio event loop error - please check connection.py for proper handling")
             return None
         
-    def _generate_mock_option_data(self, ticker, stock_price, otm_percentage, for_calls, for_puts, expiration):
+    def _generate_mock_option_data(self, ticker, stock_price, otm_percentage, expiration):
         """
         Generate mock option data when real data is not available
         
@@ -140,130 +140,128 @@ class OptionsService:
         # Higher stock prices and longer expirations typically have higher IV
         base_iv = 0.30  # 30% base IV
         
-        if for_calls:
-            # Calculate intrinsic value for call
-            call_intrinsic = max(0, stock_price - call_strike)
-            
-            # Calculate IV with price factor for call
-            call_price_factor = 1.0 + (abs(stock_price - call_strike) / stock_price) * 0.5
-            call_iv = base_iv * call_price_factor * (1 + time_factor * 0.5)
-            
-            # Calculate extrinsic value based on IV, time, and distance from ATM
-            call_atm_factor = 1.0 - min(1.0, abs(stock_price - call_strike) / stock_price)
-            call_extrinsic = stock_price * call_iv * time_factor * call_atm_factor
-            
-            # Total option price
-            call_price = call_intrinsic + call_extrinsic
-            call_price = max(0.05, call_price)
-            
-            # Calculate delta for call
-            call_delta = 0.5
-            if stock_price > call_strike:
-                call_delta = 0.6 + (0.4 * min(1.0, (stock_price - call_strike) / call_strike))
-            else:
-                call_delta = 0.4 * min(1.0, (stock_price / call_strike))
-            
-            # Generate bid/ask spread
-            call_spread_factor = 0.05 + (0.15 * (1 - call_atm_factor))  # Wider spreads for further OTM options
-            call_bid = round(call_price * (1 - call_spread_factor), 2)
-            call_ask = round(call_price * (1 + call_spread_factor), 2)
-            call_last = round((call_bid + call_ask) / 2, 2)
-            
-            # Calculate call option earnings data
-            position_qty = 100  # Assume 100 shares per standard position
-            max_contracts = int(position_qty / 100)  # Each contract represents 100 shares
-            premium_per_contract = call_price * 100  # Premium per contract (100 shares)
-            total_premium = premium_per_contract * max_contracts
-            return_on_capital = (total_premium / (call_strike * 100 * max_contracts)) * 100
-            
-            # Create call option data with earnings
-            result['call'] = {
-                'symbol': f"{ticker}{expiration}C{int(call_strike)}",
-                'strike': call_strike,
-                'expiration': expiration,
-                'option_type': 'CALL',
-                'bid': call_bid,
-                'ask': call_ask,
-                'last': call_last,
-                'volume': int(random.uniform(100, 5000)),
-                'open_interest': int(random.uniform(500, 20000)),
-                'implied_volatility': round(call_iv * 100, 2),  # Convert to percentage
-                'delta': round(call_delta, 5),
-                'gamma': round(0.06 * call_atm_factor, 5),
-                'theta': round(-(call_price * 0.01) / max(1, days_to_expiry), 5),
-                'vega': round(call_price * 0.1, 5),
-                'is_mock': True,
-                # Add earnings data
-                'earnings': {
-                    'max_contracts': max_contracts,
-                    'premium_per_contract': premium_per_contract,
-                    'total_premium': total_premium,
-                    'return_on_capital': return_on_capital
-                }
-            }
+        # Calculate intrinsic value for call
+        call_intrinsic = max(0, stock_price - call_strike)
         
-        if for_puts:
-            # Calculate intrinsic value for put
-            put_intrinsic = max(0, put_strike - stock_price)
-            
-            # Calculate IV with price factor for put
-            put_price_factor = 1.0 + (abs(stock_price - put_strike) / stock_price) * 0.5
-            put_iv = base_iv * put_price_factor * (1 + time_factor * 0.5)
-            
-            # Calculate extrinsic value based on IV, time, and distance from ATM
-            put_atm_factor = 1.0 - min(1.0, abs(stock_price - put_strike) / stock_price)
-            put_extrinsic = stock_price * put_iv * time_factor * put_atm_factor
-            
-            # Total option price
-            put_price = put_intrinsic + put_extrinsic
-            put_price = max(0.05, put_price)
-            
-            # Calculate delta for put
-            put_delta = -0.5
-            if stock_price < put_strike:
-                put_delta = -0.6 - (0.4 * min(1.0, (put_strike - stock_price) / put_strike))
-            else:
-                put_delta = -0.4 * min(1.0, (put_strike / stock_price))
-            
-            # Generate bid/ask spread
-            put_spread_factor = 0.05 + (0.15 * (1 - put_atm_factor))  # Wider spreads for further OTM options
-            put_bid = round(put_price * (1 - put_spread_factor), 2)
-            put_ask = round(put_price * (1 + put_spread_factor), 2)
-            put_last = round((put_bid + put_ask) / 2, 2)
-            
-            # Calculate put option earnings data
-            position_value = put_strike * 100 * int(position_qty / 100)  # Cash needed to secure puts
-            max_contracts = int(position_value / (put_strike * 100))
-            premium_per_contract = put_price * 100  # Premium per contract
-            total_premium = premium_per_contract * max_contracts
-            return_on_cash = (total_premium / position_value) * 100
-            
-            # Create put option data with earnings
-            result['put'] = {
-                'symbol': f"{ticker}{expiration}P{int(put_strike)}",
-                'strike': put_strike,
-                'expiration': expiration,
-                'option_type': 'PUT',
-                'bid': put_bid,
-                'ask': put_ask,
-                'last': put_last,
-                'volume': int(random.uniform(100, 5000)),
-                'open_interest': int(random.uniform(500, 20000)),
-                'implied_volatility': round(put_iv * 100, 2),  # Convert to percentage
-                'delta': round(put_delta, 5),
-                'gamma': round(0.06 * put_atm_factor, 5),
-                'theta': round(-(put_price * 0.01) / max(1, days_to_expiry), 5),
-                'vega': round(put_price * 0.1, 5),
-                'is_mock': True,
-                # Add earnings data
-                'earnings': {
-                    'max_contracts': max_contracts,
-                    'premium_per_contract': premium_per_contract,
-                    'total_premium': total_premium,
-                    'return_on_cash': return_on_cash
-                }
-            }
+        # Calculate IV with price factor for call
+        call_price_factor = 1.0 + (abs(stock_price - call_strike) / stock_price) * 0.5
+        call_iv = base_iv * call_price_factor * (1 + time_factor * 0.5)
         
+        # Calculate extrinsic value based on IV, time, and distance from ATM
+        call_atm_factor = 1.0 - min(1.0, abs(stock_price - call_strike) / stock_price)
+        call_extrinsic = stock_price * call_iv * time_factor * call_atm_factor
+        
+        # Total option price
+        call_price = call_intrinsic + call_extrinsic
+        call_price = max(0.05, call_price)
+        
+        # Calculate delta for call
+        call_delta = 0.5
+        if stock_price > call_strike:
+            call_delta = 0.6 + (0.4 * min(1.0, (stock_price - call_strike) / call_strike))
+        else:
+            call_delta = 0.4 * min(1.0, (stock_price / call_strike))
+        
+        # Generate bid/ask spread
+        call_spread_factor = 0.05 + (0.15 * (1 - call_atm_factor))  # Wider spreads for further OTM options
+        call_bid = round(call_price * (1 - call_spread_factor), 2)
+        call_ask = round(call_price * (1 + call_spread_factor), 2)
+        call_last = round((call_bid + call_ask) / 2, 2)
+        
+        # Calculate call option earnings data
+        position_qty = 100  # Assume 100 shares per standard position
+        max_contracts = int(position_qty / 100)  # Each contract represents 100 shares
+        premium_per_contract = call_price * 100  # Premium per contract (100 shares)
+        total_premium = premium_per_contract * max_contracts
+        return_on_capital = (total_premium / (call_strike * 100 * max_contracts)) * 100
+        
+        # Create call option data with earnings
+        result['call'] = {
+            'symbol': f"{ticker}{expiration}C{int(call_strike)}",
+            'strike': call_strike,
+            'expiration': expiration,
+            'option_type': 'CALL',
+            'bid': call_bid,
+            'ask': call_ask,
+            'last': call_last,
+            'volume': int(random.uniform(100, 5000)),
+            'open_interest': int(random.uniform(500, 20000)),
+            'implied_volatility': round(call_iv * 100, 2),  # Convert to percentage
+            'delta': round(call_delta, 5),
+            'gamma': round(0.06 * call_atm_factor, 5),
+            'theta': round(-(call_price * 0.01) / max(1, days_to_expiry), 5),
+            'vega': round(call_price * 0.1, 5),
+            'is_mock': True,
+            # Add earnings data
+            'earnings': {
+                'max_contracts': max_contracts,
+                'premium_per_contract': premium_per_contract,
+                'total_premium': total_premium,
+                'return_on_capital': return_on_capital
+            }
+        }
+        
+        # Calculate intrinsic value for put
+        put_intrinsic = max(0, put_strike - stock_price)
+        
+        # Calculate IV with price factor for put
+        put_price_factor = 1.0 + (abs(stock_price - put_strike) / stock_price) * 0.5
+        put_iv = base_iv * put_price_factor * (1 + time_factor * 0.5)
+        
+        # Calculate extrinsic value based on IV, time, and distance from ATM
+        put_atm_factor = 1.0 - min(1.0, abs(stock_price - put_strike) / stock_price)
+        put_extrinsic = stock_price * put_iv * time_factor * put_atm_factor
+        
+        # Total option price
+        put_price = put_intrinsic + put_extrinsic
+        put_price = max(0.05, put_price)
+        
+        # Calculate delta for put
+        put_delta = -0.5
+        if stock_price < put_strike:
+            put_delta = -0.6 - (0.4 * min(1.0, (put_strike - stock_price) / put_strike))
+        else:
+            put_delta = -0.4 * min(1.0, (put_strike / stock_price))
+        
+        # Generate bid/ask spread
+        put_spread_factor = 0.05 + (0.15 * (1 - put_atm_factor))  # Wider spreads for further OTM options
+        put_bid = round(put_price * (1 - put_spread_factor), 2)
+        put_ask = round(put_price * (1 + put_spread_factor), 2)
+        put_last = round((put_bid + put_ask) / 2, 2)
+        
+        # Calculate put option earnings data
+        position_value = put_strike * 100 * int(position_qty / 100)  # Cash needed to secure puts
+        max_contracts = int(position_value / (put_strike * 100))
+        premium_per_contract = put_price * 100  # Premium per contract
+        total_premium = premium_per_contract * max_contracts
+        return_on_cash = (total_premium / position_value) * 100
+        
+        # Create put option data with earnings
+        result['put'] = {
+            'symbol': f"{ticker}{expiration}P{int(put_strike)}",
+            'strike': put_strike,
+            'expiration': expiration,
+            'option_type': 'PUT',
+            'bid': put_bid,
+            'ask': put_ask,
+            'last': put_last,
+            'volume': int(random.uniform(100, 5000)),
+            'open_interest': int(random.uniform(500, 20000)),
+            'implied_volatility': round(put_iv * 100, 2),  # Convert to percentage
+            'delta': round(put_delta, 5),
+            'gamma': round(0.06 * put_atm_factor, 5),
+            'theta': round(-(put_price * 0.01) / max(1, days_to_expiry), 5),
+            'vega': round(put_price * 0.1, 5),
+            'is_mock': True,
+            # Add earnings data
+            'earnings': {
+                'max_contracts': max_contracts,
+                'premium_per_contract': premium_per_contract,
+                'total_premium': total_premium,
+                'return_on_cash': return_on_cash
+            }
+        }
+    
         return result
         
     def _adjust_to_standard_strike(self, price):
@@ -390,7 +388,7 @@ class OptionsService:
             try:
                 logger.info(f"Generating mock options data for {ticker} with {otm_percentage}% OTM")
                 # Pass both for_calls and for_puts as True to generate both types of options
-                options_data = self._generate_mock_option_data(ticker, stock_price, otm_percentage, True, True, expiration)
+                options_data = self._generate_mock_option_data(ticker, stock_price, otm_percentage, expiration)
                 logger.info(f"Successfully generated mock options data for {ticker}")
             except Exception as e:
                 logger.error(f"Error generating mock options data for {ticker}: {e}")
