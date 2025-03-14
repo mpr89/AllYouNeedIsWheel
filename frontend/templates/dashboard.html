@@ -241,9 +241,14 @@
                             <td>${order.quantity}</td>
                             <td><span class="badge bg-${getBadgeColor(order.status)}">${order.status}</span></td>
                             <td>
-                                <button class="btn btn-sm btn-danger cancel-order-btn" data-order-id="${order.id}">
-                                    <i class="bi bi-x-circle"></i> Cancel
-                                </button>
+                                <div class="d-flex gap-2">
+                                    <button class="btn btn-sm btn-primary execute-order-btn" data-order-id="${order.id}">
+                                        <i class="bi bi-play-fill"></i> Execute
+                                    </button>
+                                    <button class="btn btn-sm btn-danger cancel-order-btn" data-order-id="${order.id}">
+                                        <i class="bi bi-x-circle"></i> Cancel
+                                    </button>
+                                </div>
                             </td>
                         `;
                         
@@ -254,9 +259,15 @@
                     document.querySelectorAll('.cancel-order-btn').forEach(button => {
                         button.addEventListener('click', function() {
                             const orderId = this.getAttribute('data-order-id');
-                            if (confirm('Are you sure you want to cancel this order?')) {
-                                cancelOrder(orderId);
-                            }
+                            cancelOrder(orderId);
+                        });
+                    });
+                    
+                    // Add event listeners to execute buttons
+                    document.querySelectorAll('.execute-order-btn').forEach(button => {
+                        button.addEventListener('click', function() {
+                            const orderId = this.getAttribute('data-order-id');
+                            executeOrder(orderId);
                         });
                     });
                 })
@@ -269,9 +280,58 @@
         // Cancel an order
         function cancelOrder(orderId) {
             console.log(`Cancelling order ${orderId}`);
-            // This would be implemented with a DELETE API endpoint
-            // For now, just reload the pending orders table
-            loadPendingOrders();
+            
+            // Make a DELETE request to the API
+            fetch(`/api/options/order/${orderId}`, {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log(`Order ${orderId} cancelled successfully:`, data);
+                // Reload the pending orders table to reflect the changes
+                loadPendingOrders();
+            })
+            .catch(error => {
+                console.error(`Error cancelling order ${orderId}:`, error);
+                alert(`Error cancelling order: ${error.message}`);
+            });
+        }
+        
+        // Execute an order through TWS
+        function executeOrder(orderId) {
+            console.log(`Executing order ${orderId}`);
+            
+            // Make a POST request to the execution API
+            fetch(`/api/options/execute/${orderId}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log(`Order ${orderId} execution initiated:`, data);
+                alert(`Order execution initiated! ${data.message || ''}`);
+                // Reload the pending orders table to reflect the updated status
+                loadPendingOrders();
+            })
+            .catch(error => {
+                console.error(`Error executing order ${orderId}:`, error);
+                alert(`Error executing order: ${error.message}`);
+            });
         }
         
         // Helper function to get badge color based on order status
