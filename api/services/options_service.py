@@ -449,7 +449,7 @@ class OptionsService:
             'is_mock': True
         } 
 
-    def _process_options_chain(self, options_chains, ticker, stock_price, otm_percentage, for_calls=True, for_puts=True):
+    def _process_options_chain(self, options_chains, ticker, stock_price, otm_percentage):
         """
         Process options chain data and format it similar to mock data format
         
@@ -458,8 +458,6 @@ class OptionsService:
             ticker (str): Stock symbol
             stock_price (float): Current stock price
             otm_percentage (float): OTM percentage to filter strikes
-            for_calls (bool): Whether to process call options
-            for_puts (bool): Whether to process put options
             
         Returns:
             dict: Formatted options data
@@ -531,7 +529,7 @@ class OptionsService:
                             'is_mock': False
                         }
                         
-                        # Calculate earnings data
+                        # Calculate earnings data based on option type and add to the appropriate list
                         if option.get('option_type') == 'CALL':
                             position_qty = 100  # Assume 100 shares per standard position
                             max_contracts = int(position_qty / 100)  # Each contract represents 100 shares
@@ -547,9 +545,9 @@ class OptionsService:
                                 'return_on_capital': return_on_capital
                             }
                             
-                            if for_calls:
-                                result['calls'].append(option_data)
-                                
+                            # Add to calls list directly
+                            result['calls'].append(option_data)
+                            
                         elif option.get('option_type') == 'PUT':
                             position_value = strike * 100 * int(100 / 100)  # Cash needed to secure puts
                             max_contracts = int(position_value / (strike * 100))
@@ -565,8 +563,8 @@ class OptionsService:
                                 'return_on_cash': return_on_cash
                             }
                             
-                            if for_puts:
-                                result['puts'].append(option_data)
+                            # Add to puts list directly
+                            result['puts'].append(option_data)
                     
                     except Exception as e:
                         logger.error(f"Error processing individual option in chain for {ticker}: {str(e)}")
