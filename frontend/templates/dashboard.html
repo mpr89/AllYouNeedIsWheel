@@ -180,8 +180,31 @@
         }
         
         function formatDate(dateString) {
+            if (!dateString) return 'N/A';
+            
+            // Handle YYYYMMDD format (common for options expiration)
+            if (dateString.length === 8 && !isNaN(dateString)) {
+                const year = dateString.substring(0, 4);
+                const month = dateString.substring(4, 6);
+                const day = dateString.substring(6, 8);
+                return new Date(year, month - 1, day).toLocaleDateString('en-US', { 
+                    year: 'numeric', 
+                    month: 'short', 
+                    day: 'numeric' 
+                });
+            }
+            
+            // Try standard date parsing
             const date = new Date(dateString);
-            return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+            if (isNaN(date.getTime())) {
+                return 'Invalid Date';
+            }
+            
+            return date.toLocaleDateString('en-US', { 
+                year: 'numeric', 
+                month: 'short', 
+                day: 'numeric' 
+            });
         }
         
         function formatStrike(strike) {
@@ -224,6 +247,18 @@
                             }
                         }
                         
+                        // Try to get expiration from details if available, otherwise use order.expiration
+                        const expiration = details.expiry || details.expiration || order.expiration;
+                        
+                        // Debug logging for expiration date
+                        console.log(`Order ${order.id} expiration data:`, {
+                            orderExpiration: order.expiration,
+                            detailsExpiry: details.expiry,
+                            detailsExpiration: details.expiration,
+                            finalExpiration: expiration,
+                            formattedDate: formatDate(expiration)
+                        });
+                        
                         // Create row
                         const row = document.createElement('tr');
                         row.innerHTML = `
@@ -231,7 +266,7 @@
                             <td>${order.ticker}</td>
                             <td>${order.option_type || 'N/A'}</td>
                             <td>${formatStrike(order.strike)}</td>
-                            <td>${formatDate(order.expiration) || 'N/A'}</td>
+                            <td>${formatDate(expiration)}</td>
                             <td>${formatCurrency(order.premium) || '$0.00'}</td>
                             <td>${order.quantity || 1}</td>
                             <td><span class="badge bg-${getBadgeColor(order.status)}">${order.status}</span></td>
