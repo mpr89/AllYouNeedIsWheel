@@ -50,7 +50,7 @@ class OptionsDatabase:
         
         # Create pending orders table
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS pending_orders (
+            CREATE TABLE IF NOT EXISTS orders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT NOT NULL,
                 ticker TEXT NOT NULL,
@@ -142,7 +142,7 @@ class OptionsDatabase:
             
             # Insert into database
             cursor.execute('''
-                INSERT INTO pending_orders 
+                INSERT INTO orders 
                 (timestamp, ticker, option_type, action, strike, expiration, premium, quantity, status, executed, details)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (timestamp, ticker, option_type, action, strike, expiration, premium, quantity, 'pending', False, details))
@@ -174,7 +174,7 @@ class OptionsDatabase:
             cursor = conn.cursor()
             
             cursor.execute('''
-                SELECT * FROM pending_orders
+                SELECT * FROM orders
                 WHERE executed = ?
                 ORDER BY timestamp DESC
                 LIMIT ?

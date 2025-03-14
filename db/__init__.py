@@ -2,6 +2,6 @@
 Database package for SQLite logging
 """
 
-from .database import TradeLogger, OptionsDatabase
+from .database import OptionsDatabase
 
-__all__ = ['TradeLogger', 'OptionsDatabase'] 
+__all__ = ['OptionsDatabase'] 
