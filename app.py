@@ -52,7 +52,6 @@ def create_application():
             "client_id": 1,
             "readonly": True
         }
-    
     # Store connection config in the app
     app.config['connection_config'] = connection_config
     logger.info(f"Using connection config: {connection_config}")
