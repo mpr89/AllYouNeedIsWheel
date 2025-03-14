@@ -195,21 +195,19 @@
             
             if (!pendingOrdersTable) return;
             
-            const tbody = pendingOrdersTable.querySelector('tbody');
-            
-            // Show loading message
-            tbody.innerHTML = '<tr><td colspan="7" class="text-center">Loading orders...</td></tr>';
+            // Show loading message - update to use pendingOrdersTable directly
+            pendingOrdersTable.innerHTML = '<tr><td colspan="7" class="text-center">Loading orders...</td></tr>';
             
             fetch('/api/options/orders?status=pending')
                 .then(response => response.json())
                 .then(data => {
                     if (!data || !data.orders || data.orders.length === 0) {
-                        tbody.innerHTML = '<tr><td colspan="7" class="text-center">No pending orders found</td></tr>';
+                        pendingOrdersTable.innerHTML = '<tr><td colspan="7" class="text-center">No pending orders found</td></tr>';
                         return;
                     }
                     
                     // Clear the table
-                    tbody.innerHTML = '';
+                    pendingOrdersTable.innerHTML = '';
                     
                     // Add rows for each order
                     data.orders.forEach(order => {
@@ -240,11 +238,11 @@
                                 <button class="btn btn-sm btn-danger cancel-btn" data-order-id="${order.id}">Cancel</button>
                             </td>
                         `;
-                        tbody.appendChild(row);
+                        pendingOrdersTable.appendChild(row);
                     });
                     
                     // Add event listeners to cancel buttons
-                    const cancelButtons = tbody.querySelectorAll('.cancel-btn');
+                    const cancelButtons = pendingOrdersTable.querySelectorAll('.cancel-btn');
                     cancelButtons.forEach(button => {
                         button.addEventListener('click', () => {
                             const orderId = button.getAttribute('data-order-id');
@@ -253,7 +251,7 @@
                     });
                     
                     // Add event listeners to execute buttons
-                    const executeButtons = tbody.querySelectorAll('.execute-btn');
+                    const executeButtons = pendingOrdersTable.querySelectorAll('.execute-btn');
                     executeButtons.forEach(button => {
                         button.addEventListener('click', () => {
                             const orderId = button.getAttribute('data-order-id');
@@ -263,7 +261,7 @@
                 })
                 .catch(error => {
                     console.error('Error loading pending orders:', error);
-                    tbody.innerHTML = `<tr><td colspan="7" class="text-center text-danger">Error loading orders: ${error.message}</td></tr>`;
+                    pendingOrdersTable.innerHTML = `<tr><td colspan="7" class="text-center text-danger">Error loading orders: ${error.message}</td></tr>`;
                 });
         }
         
