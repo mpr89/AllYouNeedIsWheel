@@ -9,13 +9,14 @@ import random
 import time
 from datetime import datetime, timedelta
 import pandas as pd
-from core.connection import IBConnection, Option, Stock
+from core.connection import IBConnection, Option, Stock, suppress_ib_logs
 from core.utils import get_closest_friday, get_next_monthly_expiration, get_strikes_around_price
 from config import Config
 from db.database import OptionsDatabase
 import traceback
 import concurrent.futures
 from functools import partial
+import json
 
 logger = logging.getLogger('api.services.options')
 
@@ -299,6 +300,173 @@ class OptionsService:
         else:
             # $10 increments for stocks over $250
             return round(price / 10) * 10
+      
+    def execute_order(self, order_id, db):
+        """
+        Execute an order by sending it to TWS
+        
+        Args:
+            order_id (int): The ID of the order to execute
+            db: Database instance to retrieve and update order information
+            
+        Returns:
+            dict: Execution result with status and details
+        """
+        logger.info(f"Executing order with ID {order_id}")
+        
+        try:
+            # Try to get the order first to ensure it exists
+            order = db.get_order(order_id)
+            if not order:
+                logger.error(f"Order with ID {order_id} not found")
+                return {
+                    "success": False,
+                    "error": f"Order with ID {order_id} not found"
+                }, 404
+                
+            # Check if order is in executable state
+            if order['status'] != 'pending':
+                logger.error(f"Cannot execute order with status '{order['status']}'")
+                return {
+                    "success": False,
+                    "error": f"Cannot execute order with status '{order['status']}'. Only 'pending' orders can be executed."
+                }, 400
+                
+            # Get connection to TWS
+            suppress_ib_logs()
+            
+            # Use the existing connection method
+            conn = self._ensure_connection()
+            if not conn:
+                logger.error("Failed to connect to TWS")
+                return {
+                    "success": False,
+                    "error": "Failed to connect to TWS"
+                }, 500
+                
+            # Parse order details
+            details = order.get('details', {})
+            if isinstance(details, str):
+                try:
+                    details = json.loads(details)
+                except:
+                    details = {}
+                    
+            # Extract order information
+            symbol = details.get('symbol', order.get('ticker'))
+            if not symbol:
+                conn.disconnect()
+                return {
+                    "success": False,
+                    "error": "Missing symbol in order details"
+                }, 400
+                
+            quantity = int(order.get('quantity', 0))
+            if quantity <= 0:
+                conn.disconnect()
+                return {
+                    "success": False,
+                    "error": "Invalid quantity"
+                }, 400
+                
+            order_type = details.get('order_type', 'LMT')
+            action = details.get('action', 'SELL')  # Default to SELL for options
+            
+            # Extract option details
+            expiry = details.get('expiry')
+            strike = details.get('strike')
+            option_type = details.get('option_type')
+            
+            if not all([expiry, strike, option_type]):
+                conn.disconnect()
+                return {
+                    "success": False,
+                    "error": "Missing option details (expiry, strike, or option_type)"
+                }, 400
+                
+            # Get limit price
+            limit_price = details.get('limit_price')
+            if order_type.upper() == 'LMT' and not limit_price:
+                conn.disconnect()
+                return {
+                    "success": False,
+                    "error": "Missing limit price for limit order"
+                }, 400
+                
+            # Create contract
+            contract = conn.create_option_contract(
+                symbol=symbol,
+                expiry=expiry,
+                strike=float(strike),
+                option_type=option_type
+            )
+            
+            if not contract:
+                conn.disconnect()
+                return {
+                    "success": False,
+                    "error": "Failed to create option contract"
+                }, 500
+                
+            # Create order
+            ib_order = conn.create_order(
+                action=action,
+                quantity=quantity,
+                order_type=order_type,
+                limit_price=limit_price
+            )
+            
+            if not ib_order:
+                conn.disconnect()
+                return {
+                    "success": False,
+                    "error": "Failed to create order"
+                }, 500
+                
+            # Place order
+            result = conn.place_order(contract, ib_order)
+            conn.disconnect()
+            
+            if not result:
+                return {
+                    "success": False,
+                    "error": "Failed to place order"
+                }, 500
+                
+            # Update order status in database
+            execution_details = {
+                "ib_order_id": result.get('order_id'),
+                "ib_status": result.get('status'),
+                "filled": result.get('filled'),
+                "remaining": result.get('remaining'),
+                "avg_fill_price": result.get('avg_fill_price'),
+                "is_mock": result.get('is_mock', False)
+            }
+            
+            # Update order status to 'processing'
+            db.update_order_status(
+                order_id=order_id,
+                status="processing",
+                execution_details=execution_details
+            )
+            
+            logger.info(f"Order with ID {order_id} sent to TWS, IB order ID: {result.get('order_id')}")
+            return {
+                "success": True,
+                "message": "Order sent to TWS",
+                "order_id": order_id,
+                "ib_order_id": result.get('order_id'),
+                "status": "processing",
+                "execution_details": execution_details
+            }, 200
+                
+        except Exception as e:
+            logger.error(f"Error executing order: {str(e)}")
+            logger.error(traceback.format_exc())
+            return {
+                "success": False,
+                "error": str(e)
+            }, 500
       
     def get_otm_options(self, ticker=None, otm_percentage=10):
         start_time = time.time()

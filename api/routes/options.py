@@ -7,7 +7,6 @@ from api.services.options_service import OptionsService
 import traceback
 import logging
 import time
-from core.connection import IBConnection, suppress_ib_logs
 import json
 
 # Set up logger
@@ -145,127 +144,11 @@ def execute_order(order_id):
             logger.error("Database not initialized")
             return jsonify({"error": "Database not initialized"}), 500
             
-        # Try to get the order first to ensure it exists
-        order = db.get_order(order_id)
-        if not order:
-            logger.error(f"Order with ID {order_id} not found")
-            return jsonify({"error": f"Order with ID {order_id} not found"}), 404
-            
-        # Check if order is in executable state
-        if order['status'] != 'pending':
-            logger.error(f"Cannot execute order with status '{order['status']}'")
-            return jsonify({"error": f"Cannot execute order with status '{order['status']}'. Only 'pending' orders can be executed."}), 400
-            
-        # Get connection to TWS
-        connection_config = current_app.config.get('connection_config', {})
-        suppress_ib_logs()
+        # Use the options service to execute the order
+        response, status_code = options_service.execute_order(order_id, db)
         
-        ib_conn = IBConnection(
-            host=connection_config.get('host', '127.0.0.1'),
-            port=connection_config.get('port', 7497),
-            client_id=connection_config.get('client_id', 1),
-            readonly=connection_config.get('readonly', False)
-        )
-        
-        # Connect to TWS
-        if not ib_conn.connect():
-            logger.error("Failed to connect to TWS")
-            return jsonify({"error": "Failed to connect to TWS"}), 500
-            
-        # Parse order details
-        details = order.get('details', {})
-        if isinstance(details, str):
-            try:
-                details = json.loads(details)
-            except:
-                details = {}
-                
-        # Extract order information
-        symbol = details.get('symbol', order.get('ticker'))
-        if not symbol:
-            ib_conn.disconnect()
-            return jsonify({"error": "Missing symbol in order details"}), 400
-            
-        quantity = int(order.get('quantity', 0))
-        if quantity <= 0:
-            ib_conn.disconnect()
-            return jsonify({"error": "Invalid quantity"}), 400
-            
-        order_type = details.get('order_type', 'LMT')
-        action = details.get('action', 'SELL')  # Default to SELL for options
-        
-        # Extract option details
-        expiry = details.get('expiry')
-        strike = details.get('strike')
-        option_type = details.get('option_type')
-        
-        if not all([expiry, strike, option_type]):
-            ib_conn.disconnect()
-            return jsonify({"error": "Missing option details (expiry, strike, or option_type)"}), 400
-            
-        # Get limit price
-        limit_price = details.get('limit_price')
-        if order_type.upper() == 'LMT' and not limit_price:
-            ib_conn.disconnect()
-            return jsonify({"error": "Missing limit price for limit order"}), 400
-            
-        # Create contract
-        contract = ib_conn.create_option_contract(
-            symbol=symbol,
-            expiry=expiry,
-            strike=float(strike),
-            option_type=option_type
-        )
-        
-        if not contract:
-            ib_conn.disconnect()
-            return jsonify({"error": "Failed to create option contract"}), 500
-            
-        # Create order
-        ib_order = ib_conn.create_order(
-            action=action,
-            quantity=quantity,
-            order_type=order_type,
-            limit_price=limit_price
-        )
-        
-        if not ib_order:
-            ib_conn.disconnect()
-            return jsonify({"error": "Failed to create order"}), 500
-            
-        # Place order
-        result = ib_conn.place_order(contract, ib_order)
-        ib_conn.disconnect()
-        
-        if not result:
-            return jsonify({"error": "Failed to place order"}), 500
-            
-        # Update order status in database
-        execution_details = {
-            "ib_order_id": result.get('order_id'),
-            "ib_status": result.get('status'),
-            "filled": result.get('filled'),
-            "remaining": result.get('remaining'),
-            "avg_fill_price": result.get('avg_fill_price'),
-            "is_mock": result.get('is_mock', False)
-        }
-        
-        # Update order status to 'processing'
-        db.update_order_status(
-            order_id=order_id,
-            status="processing",
-            execution_details=execution_details
-        )
-        
-        logger.info(f"Order with ID {order_id} sent to TWS, IB order ID: {result.get('order_id')}")
-        return jsonify({
-            "success": True,
-            "message": "Order sent to TWS",
-            "order_id": order_id,
-            "ib_order_id": result.get('order_id'),
-            "status": "processing",
-            "execution_details": execution_details
-        }), 200
+        # Return the response from the service
+        return jsonify(response), status_code
             
     except Exception as e:
         logger.error(f"Error executing order: {str(e)}")
