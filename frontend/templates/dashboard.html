@@ -274,6 +274,22 @@
             loadPendingOrders();
         }
         
+        // Helper function to get badge color based on order status
+        function getBadgeColor(status) {
+            switch(status) {
+                case 'pending':
+                    return 'warning';
+                case 'completed':
+                    return 'success';
+                case 'cancelled':
+                    return 'danger';
+                case 'processing':
+                    return 'info';
+                default:
+                    return 'secondary';
+            }
+        }
+        
         // Place an order for the selected option
         function placeOrder() {
             if (!selectedOption) {
