@@ -46,8 +46,11 @@
             <div class="card-header d-flex justify-content-between align-items-center">
                 <h5 class="mb-0">Option Opportunities</h5>
                 <div class="d-flex align-items-center">
-                    <button class="btn btn-sm btn-outline-primary" id="refresh-all-options">
+                    <button class="btn btn-sm btn-outline-primary me-2" id="refresh-all-options">
                         <i class="bi bi-arrow-repeat"></i> Refresh All
+                    </button>
+                    <button class="btn btn-sm btn-outline-success" id="order-selected-option" disabled>
+                        <i class="bi bi-plus-circle"></i> Order
                     </button>
                 </div>
             </div>
@@ -77,6 +80,49 @@
             </div>
             <div class="card-footer">
                 <small class="text-muted">Options shown are Out of The Money (OTM). Higher percentage = further OTM = lower premium but less risk.</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Pending Orders Section -->
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card shadow-sm">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Pending Option Orders</h5>
+                <div class="d-flex align-items-center">
+                    <button class="btn btn-sm btn-outline-primary" id="refresh-pending-orders">
+                        <i class="bi bi-arrow-repeat"></i> Refresh
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Symbol</th>
+                                <th>Type</th>
+                                <th>Strike</th>
+                                <th>Expiration</th>
+                                <th>Premium</th>
+                                <th>Quantity</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="pending-orders-table">
+                            <tr>
+                                <td colspan="9" class="text-center">Loading pending orders...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="card-footer">
+                <small class="text-muted">Pending orders will be executed when market conditions are favorable. Check the status for updates.</small>
             </div>
         </div>
     </div>
@@ -122,29 +168,151 @@
     document.addEventListener('DOMContentLoaded', function() {
         // Initialize data structures
         const tickersData = {};
+        let selectedOption = null; // Track the currently selected option for ordering
         
-        // Helper function to format currency
+        // Utility functions
         function formatCurrency(value) {
-            if (value === undefined || value === null || (typeof value === 'number' && isNaN(value))) return '$0.00';
+            if (value === undefined || value === null) return '$0.00';
             return '$' + parseFloat(value).toFixed(2).replace(/\d(?=(\d{3})+\.)/g, '$&,');
         }
         
-        // Helper function to format strike prices without trailing zeros
-        function formatStrike(strike) {
-            if (strike === undefined || strike === null || (typeof strike === 'number' && isNaN(strike))) return 'N/A';
-            return parseFloat(strike) === parseInt(strike) ? parseInt(strike).toString() : parseFloat(strike).toString();
+        function formatDate(dateString) {
+            const date = new Date(dateString);
+            return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
         }
         
-        // Helper function to format dates
-        function formatDate(date) {
-            if (!date || !(date instanceof Date) || isNaN(date)) return 'Invalid Date';
+        function formatStrike(strike) {
+            if (!strike || strike === 0) return 'N/A';
+            return formatCurrency(strike);
+        }
+        
+        // Load pending orders table
+        function loadPendingOrders() {
+            const pendingOrdersTable = document.getElementById('pending-orders-table');
+            if (!pendingOrdersTable) {
+                console.error('Pending orders table not found');
+                return;
+            }
             
-            // Format as MM/DD/YYYY
-            const month = date.getMonth() + 1;
-            const day = date.getDate();
-            const year = date.getFullYear();
+            pendingOrdersTable.innerHTML = '<tr><td colspan="9" class="text-center">Loading pending orders...</td></tr>';
             
-            return `${month}/${day}/${year}`;
+            fetch('/api/options/pending-orders')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    pendingOrdersTable.innerHTML = '';
+                    
+                    if (!data.orders || data.orders.length === 0) {
+                        pendingOrdersTable.innerHTML = '<tr><td colspan="9" class="text-center">No pending orders found</td></tr>';
+                        return;
+                    }
+                    
+                    console.log('Loaded pending orders:', data.orders);
+                    
+                    // Create a row for each pending order
+                    data.orders.forEach(order => {
+                        const row = document.createElement('tr');
+                        
+                        // Format the date
+                        const orderDate = new Date(order.timestamp);
+                        const formattedDate = orderDate.toLocaleDateString('en-US', { 
+                            year: 'numeric', 
+                            month: 'short', 
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                        });
+                        
+                        // Create the row content
+                        row.innerHTML = `
+                            <td>${formattedDate}</td>
+                            <td>${order.ticker}</td>
+                            <td>${order.option_type}</td>
+                            <td>${formatStrike(order.strike)}</td>
+                            <td>${formatDate(order.expiration)}</td>
+                            <td>${formatCurrency(order.premium)}</td>
+                            <td>${order.quantity}</td>
+                            <td><span class="badge bg-${order.status === 'pending' ? 'warning' : 'success'}">${order.status}</span></td>
+                            <td>
+                                <button class="btn btn-sm btn-danger cancel-order-btn" data-order-id="${order.id}">
+                                    <i class="bi bi-x-circle"></i> Cancel
+                                </button>
+                            </td>
+                        `;
+                        
+                        pendingOrdersTable.appendChild(row);
+                    });
+                    
+                    // Add event listeners to cancel buttons
+                    document.querySelectorAll('.cancel-order-btn').forEach(button => {
+                        button.addEventListener('click', function() {
+                            const orderId = this.getAttribute('data-order-id');
+                            if (confirm('Are you sure you want to cancel this order?')) {
+                                cancelOrder(orderId);
+                            }
+                        });
+                    });
+                })
+                .catch(error => {
+                    console.error('Error fetching pending orders:', error);
+                    pendingOrdersTable.innerHTML = '<tr><td colspan="9" class="text-center text-danger">Error loading pending orders</td></tr>';
+                });
+        }
+        
+        // Cancel an order
+        function cancelOrder(orderId) {
+            console.log(`Cancelling order ${orderId}`);
+            // This would be implemented with a DELETE API endpoint
+            // For now, just reload the pending orders table
+            loadPendingOrders();
+        }
+        
+        // Place an order for the selected option
+        function placeOrder() {
+            if (!selectedOption) {
+                alert('Please select an option to order first');
+                return;
+            }
+            
+            console.log('Placing order for:', selectedOption);
+            
+            fetch('/api/options/order', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(selectedOption)
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log('Order placed successfully:', data);
+                alert('Order placed successfully!');
+                
+                // Reset selected option
+                selectedOption = null;
+                document.getElementById('order-selected-option').disabled = true;
+                
+                // Remove selected class from all options
+                document.querySelectorAll('.option-row.selected').forEach(row => {
+                    row.classList.remove('selected');
+                });
+                
+                // Reload pending orders table
+                loadPendingOrders();
+            })
+            .catch(error => {
+                console.error('Error placing order:', error);
+                alert('Error placing order: ' + error.message);
+            });
         }
         
         // Fetch portfolio data
@@ -276,35 +444,23 @@
                     console.error(`HTTP error ${response.status} for ${apiUrl}`);
                     throw new Error(`HTTP error ${response.status}`);
                 }
-                // Get the response as text first to handle NaN values
-                return response.text();
+                return response.json();
             })
-            .then(text => {
-                // Replace NaN with null in the response text before parsing as JSON
-                // This fixes JSON parsing errors with NaN values
-                const cleanedText = text.replace(/:NaN/g, ':null');
-                try {
-                    const data = JSON.parse(cleanedText);
-                    console.log(`Received real-time data for ${ticker}:`, data);
-                    
-                    if (!data || !data.data || !data.data[ticker]) {
-                        console.error(`Invalid data structure received for ${ticker}`, data);
-                        throw new Error('Invalid data structure');
-                    }
-                    
-                    // Store the data
-                    tickerData.data = data;
-                    tickerData.isLoading = false;
-                    tickerData.lastUpdated = new Date();
-                    
-                    // Update UI with the data
-                    updateTickerRow(ticker, data);
-                } catch (parseError) {
-                    console.error(`JSON parsing error for ${ticker}:`, parseError);
-                    console.error('Original response text:', text);
-                    console.error('Cleaned response text:', cleanedText);
-                    throw new Error(`JSON parsing error: ${parseError.message}`);
+            .then(data => {
+                console.log(`Received real-time data for ${ticker}:`, data);
+                
+                if (!data || !data.data || !data.data[ticker]) {
+                    console.error(`Invalid data structure received for ${ticker}`, data);
+                    throw new Error('Invalid data structure');
                 }
+                
+                // Store the data
+                tickerData.data = data;
+                tickerData.isLoading = false;
+                tickerData.lastUpdated = new Date();
+                
+                // Update UI with the data
+                updateTickerRow(ticker, data);
             })
             .catch(error => {
                 console.error(`Error fetching real-time options for ${ticker}:`, error);
@@ -439,19 +595,12 @@
                 const callBid = callOption.bid !== undefined ? callOption.bid : 'undefined';
                 const callAsk = callOption.ask !== undefined ? callOption.ask : 'undefined';
                 
-                // Handle NaN values safely
-                const safeCallBid = typeof callBid === 'number' && !isNaN(callBid) ? callBid : 0;
-                const safeCallAsk = typeof callAsk === 'number' && !isNaN(callAsk) ? callAsk : 0;
-                
                 // Check for very small values that might be treated as zero
-                const hasSmallBidAsk = (safeCallBid > 0 && safeCallBid < 0.01) || (safeCallAsk > 0 && safeCallAsk < 0.01);
+                const hasSmallBidAsk = (callBid > 0 && callBid < 0.01) || (callAsk > 0 && callAsk < 0.01);
                 
-                console.log(`Call raw values for ${ticker}: bid=${safeCallBid.toFixed(6)}, ask=${safeCallAsk.toFixed(6)}, hasSmallValues=${hasSmallBidAsk}`);
+                console.log(`Call raw values for ${ticker}: bid=${callBid.toFixed(6)}, ask=${callAsk.toFixed(6)}, hasSmallValues=${hasSmallBidAsk}`);
                 
-                const safeStrike = callOption.strike !== undefined && !isNaN(callOption.strike) ? callOption.strike : 0;
-                const safeDelta = callOption.delta !== undefined && !isNaN(callOption.delta) ? callOption.delta : null;
-                
-                callContent = formatStrike(safeStrike) + (safeDelta ? ` (δ=${safeDelta.toFixed(2)})` : '');
+                callContent = formatStrike(callOption.strike) + (callOption.delta ? ` (δ=${callOption.delta.toFixed(2)})` : '');
                 
                 // Log call earnings data
                 console.log(`Call earnings for ${ticker}:`, callOption.earnings);
@@ -459,27 +608,22 @@
                 if (callOption.earnings) {
                     const e = callOption.earnings;
                     
-                    // Safely extract values, handling NaN
-                    const premiumPerContract = e.premium_per_contract !== undefined && !isNaN(e.premium_per_contract) ? e.premium_per_contract : 0;
-                    const totalPremium = e.total_premium !== undefined && !isNaN(e.total_premium) ? e.total_premium : 0;
-                    const returnOnCapital = e.return_on_capital !== undefined && !isNaN(e.return_on_capital) ? e.return_on_capital : 0;
-                    const maxContracts = e.max_contracts !== undefined && !isNaN(e.max_contracts) ? e.max_contracts : 0;
-                    
                     // Show raw premium value with more decimal places
-                    console.log(`Call premium raw value for ${ticker}: ${premiumPerContract.toFixed(6)}`);
+                    const rawPremium = e.premium_per_contract !== undefined ? e.premium_per_contract : 'undefined';
+                    console.log(`Call premium raw value for ${ticker}: ${rawPremium.toFixed(6)}`);
                     
                     // Check if we actually have valid premium values
-                    if (premiumPerContract > 0 && totalPremium > 0) {
-                        callPremium = `${maxContracts} × ${formatCurrency(premiumPerContract)} = ${formatCurrency(totalPremium)} (${returnOnCapital.toFixed(2)}%)`;
+                    if (e.premium_per_contract > 0 && e.total_premium > 0) {
+                        callPremium = `${e.max_contracts} × ${formatCurrency(e.premium_per_contract)} = ${formatCurrency(e.total_premium)} (${e.return_on_capital.toFixed(2)}%)`;
                     } else {
                         // Show exact bid/ask values with more decimal places
                         callPremium = `<span class="text-muted">No premium available</span><br>
-                            <small class="text-muted">Bid: ${safeCallBid.toFixed(6)}, Ask: ${safeCallAsk.toFixed(6)}</small>
+                            <small class="text-muted">Bid: ${callBid.toFixed(6)}, Ask: ${callAsk.toFixed(6)}</small>
                             ${hasSmallBidAsk ? '<br><small class="text-warning">⚠️ Very small values detected</small>' : ''}`;
                     }
                 } else {
                     callPremium = `<span class="text-muted">No earnings data available</span><br>
-                        <small class="text-muted">Bid: ${safeCallBid.toFixed(6)}, Ask: ${safeCallAsk.toFixed(6)}</small>
+                        <small class="text-muted">Bid: ${callBid.toFixed(6)}, Ask: ${callAsk.toFixed(6)}</small>
                         ${hasSmallBidAsk ? '<br><small class="text-warning">⚠️ Very small values detected</small>' : ''}`;
                 }
             }
@@ -490,19 +634,12 @@
                 const putBid = putOption.bid !== undefined ? putOption.bid : 'undefined';
                 const putAsk = putOption.ask !== undefined ? putOption.ask : 'undefined';
                 
-                // Handle NaN values safely
-                const safePutBid = typeof putBid === 'number' && !isNaN(putBid) ? putBid : 0;
-                const safePutAsk = typeof putAsk === 'number' && !isNaN(putAsk) ? putAsk : 0;
-                
                 // Check for very small values that might be treated as zero
-                const hasSmallBidAsk = (safePutBid > 0 && safePutBid < 0.01) || (safePutAsk > 0 && safePutAsk < 0.01);
+                const hasSmallBidAsk = (putBid > 0 && putBid < 0.01) || (putAsk > 0 && putAsk < 0.01);
                 
-                console.log(`Put raw values for ${ticker}: bid=${safePutBid.toFixed(6)}, ask=${safePutAsk.toFixed(6)}, hasSmallValues=${hasSmallBidAsk}`);
+                console.log(`Put raw values for ${ticker}: bid=${putBid.toFixed(6)}, ask=${putAsk.toFixed(6)}, hasSmallValues=${hasSmallBidAsk}`);
                 
-                const safeStrike = putOption.strike !== undefined && !isNaN(putOption.strike) ? putOption.strike : 0;
-                const safeDelta = putOption.delta !== undefined && !isNaN(putOption.delta) ? putOption.delta : null;
-                
-                putContent = formatStrike(safeStrike) + (safeDelta ? ` (δ=${safeDelta.toFixed(2)})` : '');
+                putContent = formatStrike(putOption.strike) + (putOption.delta ? ` (δ=${putOption.delta.toFixed(2)})` : '');
                 
                 // Log put earnings data
                 console.log(`Put earnings for ${ticker}:`, putOption.earnings);
@@ -510,56 +647,28 @@
                 if (putOption.earnings) {
                     const e = putOption.earnings;
                     
-                    // Safely extract values, handling NaN
-                    const premiumPerContract = e.premium_per_contract !== undefined && !isNaN(e.premium_per_contract) ? e.premium_per_contract : 0;
-                    const totalPremium = e.total_premium !== undefined && !isNaN(e.total_premium) ? e.total_premium : 0;
-                    const returnOnCash = e.return_on_cash !== undefined && !isNaN(e.return_on_cash) ? e.return_on_cash : 0;
-                    const maxContracts = e.max_contracts !== undefined && !isNaN(e.max_contracts) ? e.max_contracts : 0;
-                    
                     // Show raw premium value with more decimal places
-                    console.log(`Put premium raw value for ${ticker}: ${premiumPerContract.toFixed(6)}`);
+                    const rawPremium = e.premium_per_contract !== undefined ? e.premium_per_contract : 'undefined';
+                    console.log(`Put premium raw value for ${ticker}: ${rawPremium.toFixed(6)}`);
                     
                     // Check if we actually have valid premium values
-                    if (premiumPerContract > 0 && totalPremium > 0) {
-                        putPremium = `${maxContracts} × ${formatCurrency(premiumPerContract)} = ${formatCurrency(totalPremium)} (${returnOnCash.toFixed(2)}%)`;
+                    if (e.premium_per_contract > 0 && e.total_premium > 0) {
+                        putPremium = `${e.max_contracts} × ${formatCurrency(e.premium_per_contract)} = ${formatCurrency(e.total_premium)} (${e.return_on_cash.toFixed(2)}%)`;
                     } else {
                         // Show exact bid/ask values with more decimal places
                         putPremium = `<span class="text-muted">No premium available</span><br>
-                            <small class="text-muted">Bid: ${safePutBid.toFixed(6)}, Ask: ${safePutAsk.toFixed(6)}</small>
+                            <small class="text-muted">Bid: ${putBid.toFixed(6)}, Ask: ${putAsk.toFixed(6)}</small>
                             ${hasSmallBidAsk ? '<br><small class="text-warning">⚠️ Very small values detected</small>' : ''}`;
                     }
                 } else {
                     putPremium = `<span class="text-muted">No earnings data available</span><br>
-                        <small class="text-muted">Bid: ${safePutBid.toFixed(6)}, Ask: ${safePutAsk.toFixed(6)}</small>
+                        <small class="text-muted">Bid: ${putBid.toFixed(6)}, Ask: ${putAsk.toFixed(6)}</small>
                         ${hasSmallBidAsk ? '<br><small class="text-warning">⚠️ Very small values detected</small>' : ''}`;
                 }
             }
             
             // Show expiration date from the data
-            let expirationDate = null;
-            
-            // Try to get expiration date from various sources
-            if (option.expiration) {
-                // Direct expiration property
-                expirationDate = new Date(option.expiration);
-            } else if (callOption && callOption.expiration) {
-                // From call option
-                const expStr = callOption.expiration;
-                expirationDate = new Date(
-                    expStr.substring(0, 4) + '-' + 
-                    expStr.substring(4, 6) + '-' + 
-                    expStr.substring(6, 8)
-                );
-            } else if (putOption && putOption.expiration) {
-                // From put option
-                const expStr = putOption.expiration;
-                expirationDate = new Date(
-                    expStr.substring(0, 4) + '-' + 
-                    expStr.substring(4, 6) + '-' + 
-                    expStr.substring(6, 8)
-                );
-            }
-            
+            const expirationDate = data.expiration ? new Date(data.expiration) : null;
             const expirationText = expirationDate ? 
                 `<small class="text-muted">Exp: ${formatDate(expirationDate)}</small>` : 
                 '';
@@ -579,7 +688,7 @@
             // Add OTM information
             const otmInfo = document.createElement('div');
             otmInfo.className = 'mt-2';
-            otmInfo.innerHTML = `<small class="text-muted">Using OTM: ${option.otm_percentage || tickersData[ticker].otmPercentage}%</small>`;
+            otmInfo.innerHTML = `<small class="text-muted">Using OTM: ${data.otm_percentage}%</small>`;
             
             // Add a data refresh button after options are loaded
             const refreshBtn = document.createElement('button');
@@ -659,6 +768,24 @@
                     refreshAllBtn.addEventListener('click', function() {
                         console.log('Refresh all button clicked');
                         refreshAllOptions();
+                    });
+                }
+                
+                // Add order button handler
+                const orderBtn = document.getElementById('order-selected-option');
+                if (orderBtn) {
+                    orderBtn.addEventListener('click', function() {
+                        console.log('Order button clicked');
+                        placeOrder();
+                    });
+                }
+                
+                // Add refresh pending orders button handler
+                const refreshPendingBtn = document.getElementById('refresh-pending-orders');
+                if (refreshPendingBtn) {
+                    refreshPendingBtn.addEventListener('click', function() {
+                        console.log('Refresh pending orders button clicked');
+                        loadPendingOrders();
                     });
                 }
                 
@@ -792,18 +919,11 @@
                     return;
                 }
                 console.log('Real-time API test successful!');
-                // Get the response as text first to handle NaN values
-                return response.text();
+                return response.json();
             })
-            .then(text => {
-                if (!text) return;
-                
-                // Replace NaN with null in the response text before parsing as JSON
-                const cleanedText = text.replace(/:NaN/g, ':null');
-                try {
-                    const data = JSON.parse(cleanedText);
+            .then(data => {
+                if (data) {
                     console.log('Sample real-time data received:', data);
-                    
                     // Check for the presence of bid/ask values
                     if (data.data && data.data.AAPL) {
                         const appleData = data.data.AAPL;
@@ -824,10 +944,6 @@
                             console.log('No call option data found for AAPL');
                         }
                     }
-                } catch (parseError) {
-                    console.error('JSON parsing error in test endpoint:', parseError);
-                    console.error('Original response text:', text);
-                    console.error('Cleaned response text:', cleanedText);
                 }
             })
             .catch(error => {
@@ -841,6 +957,7 @@
             loadPortfolioData();
             loadPositionsTable();
             fetchTickers();
+            loadPendingOrders();  // Load pending orders on startup
             
             // Test API endpoints
             setTimeout(testApiEndpoint, 1000);

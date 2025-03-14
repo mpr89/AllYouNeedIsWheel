@@ -268,6 +268,24 @@ class OptionsDatabase:
             )
         ''')
         
+        # Create pending orders table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS pending_orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                ticker TEXT NOT NULL,
+                option_type TEXT NOT NULL,
+                action TEXT NOT NULL,
+                strike REAL NOT NULL,
+                expiration TEXT NOT NULL,
+                premium REAL,
+                quantity INTEGER DEFAULT 1,
+                status TEXT DEFAULT 'pending',
+                executed BOOLEAN DEFAULT 0,
+                details TEXT
+            )
+        ''')
+        
         conn.commit()
         conn.close()
         
@@ -316,16 +334,61 @@ class OptionsDatabase:
         except Exception as e:
             print(f"Error saving recommendation: {str(e)}")
             return None
-            
-    def get_recommendations(self, limit=10):
+    
+    def save_order(self, order_data):
         """
-        Get recent recommendations from the database
+        Save an option order to the database
         
         Args:
-            limit (int): Maximum number of recommendations to return
+            order_data (dict): Option order data
             
         Returns:
-            list: List of recommendation dictionaries
+            int: ID of the inserted record
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Extract data from order
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            ticker = order_data.get('ticker', '')
+            option_type = order_data.get('option_type', '')
+            action = 'SELL'  # Default action is sell for options
+            strike = order_data.get('strike', 0)
+            expiration = order_data.get('expiration', '')
+            premium = order_data.get('premium', 0)
+            quantity = order_data.get('quantity', 1)
+            
+            # Convert order_data to JSON for details
+            details = json.dumps(order_data)
+            
+            # Insert into database
+            cursor.execute('''
+                INSERT INTO pending_orders 
+                (timestamp, ticker, option_type, action, strike, expiration, premium, quantity, status, executed, details)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (timestamp, ticker, option_type, action, strike, expiration, premium, quantity, 'pending', False, details))
+            
+            record_id = cursor.lastrowid
+            conn.commit()
+            conn.close()
+            
+            return record_id
+        except Exception as e:
+            print(f"Error saving order: {str(e)}")
+            return None
+            
+    
+    def get_pending_orders(self, executed=False, limit=50):
+        """
+        Get pending orders from the database
+        
+        Args:
+            executed (bool): Whether to return executed orders (True) or pending orders (False)
+            limit (int): Maximum number of orders to return
+            
+        Returns:
+            list: List of order dictionaries
         """
         try:
             conn = sqlite3.connect(self.db_path)
@@ -333,27 +396,58 @@ class OptionsDatabase:
             cursor = conn.cursor()
             
             cursor.execute('''
-                SELECT * FROM recommendations
+                SELECT * FROM pending_orders
+                WHERE executed = ?
                 ORDER BY timestamp DESC
                 LIMIT ?
-            ''', (limit,))
+            ''', (executed, limit))
             
             rows = cursor.fetchall()
             conn.close()
             
             # Convert rows to dictionaries
-            recommendations = []
+            orders = []
             for row in rows:
-                rec = dict(row)
+                order = dict(row)
                 # Parse details JSON if available
-                if 'details' in rec and rec['details']:
+                if 'details' in order and order['details']:
                     try:
-                        rec['details'] = json.loads(rec['details'])
+                        order['details'] = json.loads(order['details'])
                     except:
                         pass
-                recommendations.append(rec)
+                orders.append(order)
                 
-            return recommendations
+            return orders
         except Exception as e:
-            print(f"Error getting recommendations: {str(e)}")
-            return [] 
+            print(f"Error getting pending orders: {str(e)}")
+            return []
+    
+    def update_order_status(self, order_id, status, executed=False):
+        """
+        Update the status of an order
+        
+        Args:
+            order_id (int): ID of the order to update
+            status (str): New status
+            executed (bool): Whether the order has been executed
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                UPDATE pending_orders
+                SET status = ?, executed = ?
+                WHERE id = ?
+            ''', (status, executed, order_id))
+            
+            conn.commit()
+            conn.close()
+            
+            return True
+        except Exception as e:
+            print(f"Error updating order status: {str(e)}")
+            return False 
