@@ -353,12 +353,12 @@ class OptionsService:
                     details = {}
                     
             # Extract order information
-            symbol = details.get('symbol', order.get('ticker'))
-            if not symbol:
+            ticker = order.get('ticker')
+            if not ticker:
                 conn.disconnect()
                 return {
                     "success": False,
-                    "error": "Missing symbol in order details"
+                    "error": "Missing ticker in order details"
                 }, 400
                 
             quantity = int(order.get('quantity', 0))
@@ -369,14 +369,15 @@ class OptionsService:
                     "error": "Invalid quantity"
                 }, 400
                 
-            order_type = details.get('order_type', 'LMT')
-            action = details.get('action', 'SELL')  # Default to SELL for options
+            order_type = 'LMT'
+            action = order.get('action')
             
             # Extract option details
-            expiry = details.get('expiry')
-            strike = details.get('strike')
-            option_type = details.get('option_type')
+            expiry = order.get('expiration')
+            strike = order.get('strike')
+            option_type = order.get('option_type')
             
+            print(expiry, strike, option_type)
             if not all([expiry, strike, option_type]):
                 conn.disconnect()
                 return {
@@ -385,17 +386,13 @@ class OptionsService:
                 }, 400
                 
             # Get limit price
-            limit_price = details.get('limit_price')
-            if order_type.upper() == 'LMT' and not limit_price:
-                conn.disconnect()
-                return {
-                    "success": False,
-                    "error": "Missing limit price for limit order"
-                }, 400
-                
+            # Calculate limit price (midpoint between bid and ask)
+            bid = details.get("bid", 0)
+            ask = details.get("ask", 0)
+            limit_price = (bid + ask) / 2 if bid is not None and ask is not None else (bid or ask or 0)
             # Create contract
             contract = conn.create_option_contract(
-                symbol=symbol,
+                symbol=ticker,
                 expiry=expiry,
                 strike=float(strike),
                 option_type=option_type
