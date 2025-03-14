@@ -68,6 +68,8 @@ class OptionsDatabase:
         
         conn.commit()
         conn.close()
+    
+    def save_recommendation(self, recommendation):
         """
         Save an option recommendation to the database
         
@@ -200,7 +202,7 @@ class OptionsDatabase:
             print(f"Error getting pending orders: {str(e)}")
             return []
     
-    def update_order_status(self, order_id, status, executed=False):
+    def update_order_status(self, order_id, status, executed=False, execution_details=None):
         """
         Update the status of an order
         
@@ -208,6 +210,45 @@ class OptionsDatabase:
             order_id (int): ID of the order to update
             status (str): New status
             executed (bool): Whether the order has been executed
+            execution_details (dict): Optional details about the execution
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            if execution_details:
+                # Convert execution details to JSON string
+                execution_details_json = json.dumps(execution_details)
+                
+                cursor.execute('''
+                    UPDATE orders
+                    SET status = ?, executed = ?, details = ?
+                    WHERE id = ?
+                ''', (status, executed, execution_details_json, order_id))
+            else:
+                cursor.execute('''
+                    UPDATE orders
+                    SET status = ?, executed = ?
+                    WHERE id = ?
+                ''', (status, executed, order_id))
+            
+            conn.commit()
+            conn.close()
+            
+            return True
+        except Exception as e:
+            print(f"Error updating order status: {str(e)}")
+            return False
+            
+    def delete_order(self, order_id):
+        """
+        Delete an order from the database
+        
+        Args:
+            order_id (int): ID of the order to delete
             
         Returns:
             bool: True if successful, False otherwise
@@ -217,15 +258,118 @@ class OptionsDatabase:
             cursor = conn.cursor()
             
             cursor.execute('''
-                UPDATE pending_orders
-                SET status = ?, executed = ?
+                DELETE FROM orders
                 WHERE id = ?
-            ''', (status, executed, order_id))
+            ''', (order_id,))
+            
+            # Check if any rows were affected
+            affected_rows = cursor.rowcount
             
             conn.commit()
             conn.close()
             
-            return True
+            # Return True if at least one row was deleted
+            return affected_rows > 0
         except Exception as e:
-            print(f"Error updating order status: {str(e)}")
-            return False 
+            print(f"Error deleting order: {str(e)}")
+            return False
+            
+    def get_order(self, order_id):
+        """
+        Get a specific order by ID
+        
+        Args:
+            order_id (int): ID of the order to retrieve
+            
+        Returns:
+            dict: Order data or None if not found
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row  # This enables column access by name
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT * FROM orders
+                WHERE id = ?
+            ''', (order_id,))
+            
+            row = cursor.fetchone()
+            conn.close()
+            
+            if not row:
+                return None
+                
+            # Convert row to dictionary
+            order = dict(row)
+            
+            # Parse details JSON if available
+            if 'details' in order and order['details']:
+                try:
+                    order['details'] = json.loads(order['details'])
+                except:
+                    pass
+                
+            return order
+        except Exception as e:
+            print(f"Error getting order: {str(e)}")
+            return None
+            
+    def get_orders(self, status=None, executed=None, ticker=None, limit=50):
+        """
+        Get orders from the database with flexible filtering
+        
+        Args:
+            status (str): Filter by status (e.g., 'pending', 'completed', 'cancelled')
+            executed (bool): Filter by executed flag
+            ticker (str): Filter by ticker symbol
+            limit (int): Maximum number of orders to return
+            
+        Returns:
+            list: List of order dictionaries
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row  # This enables column access by name
+            cursor = conn.cursor()
+            
+            # Build the query based on filters
+            query = "SELECT * FROM orders WHERE 1=1"
+            params = []
+            
+            if status is not None:
+                query += " AND status = ?"
+                params.append(status)
+                
+            if executed is not None:
+                query += " AND executed = ?"
+                params.append(executed)
+                
+            if ticker is not None:
+                query += " AND ticker = ?"
+                params.append(ticker)
+                
+            query += " ORDER BY timestamp DESC LIMIT ?"
+            params.append(limit)
+            
+            cursor.execute(query, params)
+            
+            rows = cursor.fetchall()
+            conn.close()
+            
+            # Convert rows to dictionaries
+            orders = []
+            for row in rows:
+                order = dict(row)
+                # Parse details JSON if available
+                if 'details' in order and order['details']:
+                    try:
+                        order['details'] = json.loads(order['details'])
+                    except:
+                        pass
+                orders.append(order)
+                
+            return orders
+        except Exception as e:
+            print(f"Error getting orders: {str(e)}")
+            return [] 

@@ -9,6 +9,7 @@ Auto-Trader is a financial options trading assistant that helps analyze, visuali
 - **Trading Recommendations**: Get AI-powered option trade recommendations
 - **Interactive Web Interface**: Modern, responsive web application with data visualizations
 - **API Integration**: Backend API to interact with Interactive Brokers
+- **Order Management**: Create, cancel, and execute option orders through the dashboard
 
 ## Architecture
 
@@ -48,6 +49,20 @@ LOG_LEVEL=INFO
 REPORT_DIR=reports
 ```
 
+Alternatively, create a `connection.json` file to configure the Interactive Brokers connection:
+
+```json
+{
+    "host": "127.0.0.1",
+    "port": 7497,
+    "client_id": 1,
+    "readonly": false,
+    "account_id": "YOUR_ACCOUNT_ID"
+}
+```
+
+A template file `connection.json.example` is included for reference.
+
 ## Usage
 
 ### Starting the Web Application
@@ -65,15 +80,32 @@ This will start the application on http://localhost:5000
 - **Portfolio Data**: GET `/api/portfolio/`
 - **Option Chains**: GET `/api/options/<ticker>`
 - **Recommendations**: GET `/api/recommendations/`
+- **Orders**:
+  - GET `/api/options/orders`: Get orders with optional filters
+  - POST `/api/options/order`: Create a new order
+  - DELETE `/api/options/order/<order_id>`: Cancel an order
+  - PUT `/api/options/order/<order_id>`: Update an order status
+  - POST `/api/options/execute/<order_id>`: Execute an order through TWS
 
 ### Web Interface
 
 The web interface consists of four main pages:
 
 1. **Dashboard**: Overview of your portfolio and key metrics
+   - Includes a table of pending orders that can be executed or cancelled
 2. **Portfolio**: Detailed view of all positions
 3. **Options**: Option chain analysis for selected tickers
 4. **Recommendations**: Trade recommendations based on your strategy
+
+## Order Management
+
+The application now supports a complete order workflow:
+
+1. **Creating Orders**: Orders are created from recommendations or manually
+2. **Viewing Orders**: All orders are visible in the dashboard with their status
+3. **Cancelling Orders**: Pending orders can be cancelled from the dashboard
+4. **Executing Orders**: Pending orders can be executed directly through TWS
+5. **Order Status**: Orders have different statuses (pending, processing, completed, cancelled)
 
 ## Development
 
@@ -93,6 +125,7 @@ auto-trader/
 │   └── templates/            # Jinja2 HTML templates
 ├── app.py                    # Main application entry point
 ├── requirements.txt          # Python dependencies
+├── connection.json.example   # Example connection configuration
 └── README.md                 # Documentation
 ```
 

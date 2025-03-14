@@ -192,96 +192,83 @@
         // Load pending orders table
         function loadPendingOrders() {
             const pendingOrdersTable = document.getElementById('pending-orders-table');
-            if (!pendingOrdersTable) {
-                console.error('Pending orders table not found');
-                return;
-            }
             
-            pendingOrdersTable.innerHTML = '<tr><td colspan="9" class="text-center">Loading pending orders...</td></tr>';
+            if (!pendingOrdersTable) return;
             
-            fetch('/api/options/pending-orders')
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error(`HTTP error ${response.status}`);
-                    }
-                    return response.json();
-                })
+            const tbody = pendingOrdersTable.querySelector('tbody');
+            
+            // Show loading message
+            tbody.innerHTML = '<tr><td colspan="7" class="text-center">Loading orders...</td></tr>';
+            
+            fetch('/api/options/orders?status=pending')
+                .then(response => response.json())
                 .then(data => {
-                    pendingOrdersTable.innerHTML = '';
-                    
-                    if (!data.orders || data.orders.length === 0) {
-                        pendingOrdersTable.innerHTML = '<tr><td colspan="9" class="text-center">No pending orders found</td></tr>';
+                    if (!data || !data.orders || data.orders.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="7" class="text-center">No pending orders found</td></tr>';
                         return;
                     }
                     
-                    console.log('Loaded pending orders:', data.orders);
+                    // Clear the table
+                    tbody.innerHTML = '';
                     
-                    // Create a row for each pending order
+                    // Add rows for each order
                     data.orders.forEach(order => {
+                        const orderDate = new Date(order.timestamp * 1000);
+                        const formattedDate = orderDate.toLocaleString();
+                        
+                        // Parse details if it's a string
+                        let details = order.details;
+                        if (typeof details === 'string') {
+                            try {
+                                details = JSON.parse(details);
+                            } catch (e) {
+                                details = {};
+                            }
+                        }
+                        
+                        // Create row
                         const row = document.createElement('tr');
-                        
-                        // Format the date
-                        const orderDate = new Date(order.timestamp);
-                        const formattedDate = orderDate.toLocaleDateString('en-US', { 
-                            year: 'numeric', 
-                            month: 'short', 
-                            day: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit'
-                        });
-                        
-                        // Create the row content
                         row.innerHTML = `
-                            <td>${formattedDate}</td>
+                            <td>${order.id}</td>
                             <td>${order.ticker}</td>
-                            <td>${order.option_type}</td>
-                            <td>${formatStrike(order.strike)}</td>
-                            <td>${formatDate(order.expiration)}</td>
-                            <td>${formatCurrency(order.premium)}</td>
                             <td>${order.quantity}</td>
+                            <td>${order.price}</td>
                             <td><span class="badge bg-${getBadgeColor(order.status)}">${order.status}</span></td>
+                            <td>${formattedDate}</td>
                             <td>
-                                <div class="d-flex gap-2">
-                                    <button class="btn btn-sm btn-primary execute-order-btn" data-order-id="${order.id}">
-                                        <i class="bi bi-play-fill"></i> Execute
-                                    </button>
-                                    <button class="btn btn-sm btn-danger cancel-order-btn" data-order-id="${order.id}">
-                                        <i class="bi bi-x-circle"></i> Cancel
-                                    </button>
-                                </div>
+                                <button class="btn btn-sm btn-success execute-btn" data-order-id="${order.id}">Execute</button>
+                                <button class="btn btn-sm btn-danger cancel-btn" data-order-id="${order.id}">Cancel</button>
                             </td>
                         `;
-                        
-                        pendingOrdersTable.appendChild(row);
+                        tbody.appendChild(row);
                     });
                     
                     // Add event listeners to cancel buttons
-                    document.querySelectorAll('.cancel-order-btn').forEach(button => {
-                        button.addEventListener('click', function() {
-                            const orderId = this.getAttribute('data-order-id');
+                    const cancelButtons = tbody.querySelectorAll('.cancel-btn');
+                    cancelButtons.forEach(button => {
+                        button.addEventListener('click', () => {
+                            const orderId = button.getAttribute('data-order-id');
                             cancelOrder(orderId);
                         });
                     });
                     
                     // Add event listeners to execute buttons
-                    document.querySelectorAll('.execute-order-btn').forEach(button => {
-                        button.addEventListener('click', function() {
-                            const orderId = this.getAttribute('data-order-id');
+                    const executeButtons = tbody.querySelectorAll('.execute-btn');
+                    executeButtons.forEach(button => {
+                        button.addEventListener('click', () => {
+                            const orderId = button.getAttribute('data-order-id');
                             executeOrder(orderId);
                         });
                     });
                 })
                 .catch(error => {
-                    console.error('Error fetching pending orders:', error);
-                    pendingOrdersTable.innerHTML = '<tr><td colspan="9" class="text-center text-danger">Error loading pending orders</td></tr>';
+                    console.error('Error loading pending orders:', error);
+                    tbody.innerHTML = `<tr><td colspan="7" class="text-center text-danger">Error loading orders: ${error.message}</td></tr>`;
                 });
         }
         
         // Cancel an order
         function cancelOrder(orderId) {
-            console.log(`Cancelling order ${orderId}`);
-            
-            // Make a DELETE request to the API
             fetch(`/api/options/order/${orderId}`, {
                 method: 'DELETE',
                 headers: {
@@ -290,26 +277,27 @@
             })
             .then(response => {
                 if (!response.ok) {
-                    throw new Error(`HTTP error ${response.status}`);
+                    return response.json().then(data => {
+                        throw new Error(data.error || 'Failed to cancel order');
+                    });
                 }
                 return response.json();
             })
             .then(data => {
-                console.log(`Order ${orderId} cancelled successfully:`, data);
-                // Reload the pending orders table to reflect the changes
+                console.log('Order cancelled:', data);
+                // Refresh the pending orders list
                 loadPendingOrders();
+                // Show success message
+                showAlert('Order cancelled successfully', 'success');
             })
             .catch(error => {
-                console.error(`Error cancelling order ${orderId}:`, error);
-                alert(`Error cancelling order: ${error.message}`);
+                console.error('Error cancelling order:', error);
+                showAlert(`Error cancelling order: ${error.message}`, 'danger');
             });
         }
         
         // Execute an order through TWS
         function executeOrder(orderId) {
-            console.log(`Executing order ${orderId}`);
-            
-            // Make a POST request to the execution API
             fetch(`/api/options/execute/${orderId}`, {
                 method: 'POST',
                 headers: {
@@ -318,20 +306,46 @@
             })
             .then(response => {
                 if (!response.ok) {
-                    throw new Error(`HTTP error ${response.status}`);
+                    return response.json().then(data => {
+                        throw new Error(data.error || 'Failed to execute order');
+                    });
                 }
                 return response.json();
             })
             .then(data => {
-                console.log(`Order ${orderId} execution initiated:`, data);
-                alert(`Order execution initiated! ${data.message || ''}`);
-                // Reload the pending orders table to reflect the updated status
+                console.log('Order executed:', data);
+                // Refresh the pending orders list
                 loadPendingOrders();
+                // Show success message
+                showAlert(`Order sent to TWS for execution (IB Order ID: ${data.ib_order_id})`, 'success');
             })
             .catch(error => {
-                console.error(`Error executing order ${orderId}:`, error);
-                alert(`Error executing order: ${error.message}`);
+                console.error('Error executing order:', error);
+                showAlert(`Error executing order: ${error.message}`, 'danger');
             });
+        }
+        
+        // Function to show alerts (add after executeOrder if it doesn't exist)
+        function showAlert(message, type = 'info') {
+            const alertDiv = document.createElement('div');
+            alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+            alertDiv.role = 'alert';
+            alertDiv.innerHTML = `
+                ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            `;
+            
+            // Add the alert at the top of the content container
+            const contentContainer = document.querySelector('.content-container');
+            if (contentContainer) {
+                contentContainer.prepend(alertDiv);
+                
+                // Auto-dismiss after 5 seconds
+                setTimeout(() => {
+                    alertDiv.classList.remove('show');
+                    setTimeout(() => alertDiv.remove(), 150);
+                }, 5000);
+            }
         }
         
         // Helper function to get badge color based on order status

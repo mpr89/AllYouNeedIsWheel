@@ -1072,3 +1072,156 @@ class IBConnection:
         else:
             # $10.00 increments for stocks over $200
             return round(strike / 10) * 10
+
+    def create_option_contract(self, symbol, expiry, strike, option_type, exchange='SMART', currency='USD'):
+        """
+        Create an option contract for TWS
+        
+        Args:
+            symbol (str): Ticker symbol
+            expiry (str): Expiration date in YYYYMMDD format
+            strike (float): Strike price
+            option_type (str): 'C', 'CALL', 'P', or 'PUT'
+            exchange (str): Exchange name, default 'SMART'
+            currency (str): Currency code, default 'USD'
+            
+        Returns:
+            Option: Contract object ready for use with TWS
+        """
+        # Normalize option type to standard format
+        if option_type.upper() in ['C', 'CALL']:
+            right = 'C'
+        elif option_type.upper() in ['P', 'PUT']:
+            right = 'P'
+        else:
+            logger.error(f"Invalid option type: {option_type}")
+            return None
+            
+        try:
+            contract = Option(
+                symbol=symbol, 
+                lastTradeDateOrContractMonth=expiry,
+                strike=float(strike),
+                right=right,
+                exchange=exchange,
+                currency=currency
+            )
+            
+            logger.info(f"Created option contract: {symbol} {expiry} {strike} {right}")
+            return contract
+        except Exception as e:
+            logger.error(f"Error creating option contract: {str(e)}")
+            logger.error(traceback.format_exc())
+            return None
+            
+    def create_order(self, action, quantity, order_type='LMT', limit_price=None, tif='DAY'):
+        """
+        Create an order for TWS
+        
+        Args:
+            action (str): 'BUY' or 'SELL'
+            quantity (int): Number of contracts
+            order_type (str): 'MKT', 'LMT', etc.
+            limit_price (float): Price for limit orders
+            tif (str): Time in force - 'DAY', 'GTC', etc.
+            
+        Returns:
+            Order: Order object ready for use with TWS
+        """
+        from ib_insync import LimitOrder, MarketOrder
+        
+        try:
+            if order_type.upper() == 'LMT':
+                if limit_price is None:
+                    logger.error("Limit price required for limit orders")
+                    return None
+                    
+                order = LimitOrder(
+                    action=action.upper(),
+                    totalQuantity=quantity,
+                    lmtPrice=limit_price,
+                    tif=tif
+                )
+            elif order_type.upper() == 'MKT':
+                order = MarketOrder(
+                    action=action.upper(),
+                    totalQuantity=quantity,
+                    tif=tif
+                )
+            else:
+                logger.error(f"Unsupported order type: {order_type}")
+                return None
+                
+            logger.info(f"Created {order_type} order: {action} {quantity} contracts")
+            return order
+        except Exception as e:
+            logger.error(f"Error creating order: {str(e)}")
+            logger.error(traceback.format_exc())
+            return None
+            
+    def place_order(self, contract, order):
+        """
+        Place an order with TWS
+        
+        Args:
+            contract (Contract): Contract object (e.g., Option)
+            order (Order): Order object
+            
+        Returns:
+            dict: Order result with order_id and trade info
+            None: If an error occurs
+        """
+        if not self.is_connected():
+            logger.error("Cannot place order - not connected to TWS")
+            return None
+            
+        try:
+            # Check if we're in read-only mode
+            if self.readonly:
+                logger.warning("Cannot place order - connection in read-only mode")
+                # Return mock data
+                mock_order_id = int(time.time()) % 10000
+                return {
+                    'order_id': mock_order_id,
+                    'status': 'submitted',
+                    'filled': 0,
+                    'remaining': order.totalQuantity,
+                    'avg_fill_price': 0,
+                    'perm_id': mock_order_id,
+                    'last_fill_price': 0,
+                    'client_id': self.client_id,
+                    'why_held': '',
+                    'market_cap': 0,
+                    'is_mock': True
+                }
+                
+            # Place the order
+            trade = self.ib.placeOrder(contract, order)
+            
+            # Wait for order acknowledgment (order ID assigned)
+            timeout = 3  # seconds
+            start_time = time.time()
+            while not trade.orderStatus.orderId and time.time() - start_time < timeout:
+                self.ib.waitOnUpdate(timeout=0.1)
+                
+            # Get order status
+            order_status = {
+                'order_id': trade.orderStatus.orderId,
+                'status': trade.orderStatus.status,
+                'filled': trade.orderStatus.filled,
+                'remaining': trade.orderStatus.remaining,
+                'avg_fill_price': trade.orderStatus.avgFillPrice,
+                'perm_id': trade.orderStatus.permId,
+                'last_fill_price': trade.orderStatus.lastFillPrice,
+                'client_id': trade.orderStatus.clientId,
+                'why_held': trade.orderStatus.whyHeld,
+                'market_cap': trade.orderStatus.mktCapPrice,
+                'is_mock': False
+            }
+            
+            logger.info(f"Order placed: {order_status}")
+            return order_status
+        except Exception as e:
+            logger.error(f"Error placing order: {str(e)}")
+            logger.error(traceback.format_exc())
+            return None
