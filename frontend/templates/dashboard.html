@@ -49,8 +49,8 @@
                     <button class="btn btn-sm btn-outline-primary me-2" id="refresh-all-options">
                         <i class="bi bi-arrow-repeat"></i> Refresh All
                     </button>
-                    <button class="btn btn-sm btn-outline-success" id="order-selected-option" disabled>
-                        <i class="bi bi-plus-circle"></i> Order
+                    <button class="btn btn-sm btn-outline-success" id="order-all-options">
+                        <i class="bi bi-plus-circle"></i> Order All
                     </button>
                 </div>
             </div>
@@ -271,7 +271,125 @@
             loadPendingOrders();
         }
         
-        // Place an order for the selected option
+        // Place order for both call and put options for a specific ticker
+        function placeTickerOrder(ticker) {
+            if (!ticker || !tickersData[ticker] || !tickersData[ticker].data) {
+                console.error(`Cannot place order for ${ticker}: ticker data not found or not loaded`);
+                return Promise.reject(new Error('Ticker data not loaded'));
+            }
+            
+            const tickerData = tickersData[ticker].data;
+            if (!tickerData.data || !tickerData.data[ticker]) {
+                console.error(`Invalid data structure for ${ticker}`);
+                return Promise.reject(new Error('Invalid ticker data structure'));
+            }
+            
+            const option = tickerData.data[ticker];
+            const orders = [];
+            
+            // Process call option
+            let callOption = null;
+            if (option.calls && option.calls.length > 0) {
+                callOption = option.calls[0];
+            } else if (option.call) {
+                callOption = option.call;
+            }
+            
+            // Process put option
+            let putOption = null;
+            if (option.puts && option.puts.length > 0) {
+                putOption = option.puts[0];
+            } else if (option.put) {
+                putOption = option.put;
+            }
+            
+            // Create orders array with valid options
+            if (callOption && callOption.strike && callOption.expiration) {
+                orders.push({
+                    ticker: ticker,
+                    option_type: 'CALL',
+                    strike: callOption.strike,
+                    expiration: callOption.expiration,
+                    premium: callOption.bid || callOption.last || callOption.ask || 0,
+                    quantity: 1
+                });
+            }
+            
+            if (putOption && putOption.strike && putOption.expiration) {
+                orders.push({
+                    ticker: ticker,
+                    option_type: 'PUT',
+                    strike: putOption.strike,
+                    expiration: putOption.expiration,
+                    premium: putOption.bid || putOption.last || putOption.ask || 0,
+                    quantity: 1
+                });
+            }
+            
+            console.log(`Placing orders for ${ticker}:`, orders);
+            
+            if (orders.length === 0) {
+                console.error(`No valid options found for ${ticker}`);
+                return Promise.reject(new Error('No valid options found'));
+            }
+            
+            // Process each order sequentially
+            return orders.reduce((promise, order) => {
+                return promise.then(() => {
+                    return fetch('/api/options/order', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(order)
+                    })
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error(`HTTP error ${response.status}`);
+                        }
+                        return response.json();
+                    });
+                });
+            }, Promise.resolve());
+        }
+        
+        // Order all options for all tickers
+        function orderAllOptions() {
+            const tickers = Object.keys(tickersData);
+            if (tickers.length === 0) {
+                alert('No tickers loaded. Please refresh the data first.');
+                return;
+            }
+            
+            if (!confirm(`Are you sure you want to place orders for both call and put options for all ${tickers.length} tickers?`)) {
+                return;
+            }
+            
+            console.log(`Placing orders for all tickers: ${tickers.join(', ')}`);
+            
+            // Process each ticker with a small delay
+            let successCount = 0;
+            let failCount = 0;
+            
+            Promise.all(tickers.map(ticker => {
+                return placeTickerOrder(ticker)
+                    .then(() => {
+                        successCount++;
+                        console.log(`Successfully placed orders for ${ticker}`);
+                    })
+                    .catch(error => {
+                        failCount++;
+                        console.error(`Failed to place orders for ${ticker}:`, error);
+                        return null; // Continue with other tickers even if one fails
+                    });
+            }))
+            .then(() => {
+                alert(`Order processing complete: ${successCount} successful, ${failCount} failed.`);
+                loadPendingOrders(); // Refresh the pending orders table
+            });
+        }
+        
+        // Place an order for the selected option (keep existing function for backward compatibility)
         function placeOrder() {
             if (!selectedOption) {
                 alert('Please select an option to order first');
@@ -692,26 +810,47 @@
             
             // Add a data refresh button after options are loaded
             const refreshBtn = document.createElement('button');
-            refreshBtn.className = 'btn btn-sm btn-outline-primary fetch-btn mt-2';
+            refreshBtn.className = 'btn btn-sm btn-outline-primary fetch-btn mt-2 me-2';
             refreshBtn.setAttribute('data-ticker', ticker);
             refreshBtn.innerHTML = `<i class="bi bi-arrow-repeat"></i> Refresh Data`;
             refreshBtn.addEventListener('click', function() {
                 fetchOptionsForTicker(ticker);
             });
             
-            // Add the OTM info to the Sell Call cell and the refresh button to the Actions cell (last column)
-            const fetchBtnContainer = document.createElement('div');
-            fetchBtnContainer.className = 'mt-2';
-            fetchBtnContainer.appendChild(refreshBtn);
+            // Add an order button for this ticker
+            const orderBtn = document.createElement('button');
+            orderBtn.className = 'btn btn-sm btn-outline-success order-ticker-btn mt-2';
+            orderBtn.setAttribute('data-ticker', ticker);
+            orderBtn.innerHTML = `<i class="bi bi-plus-circle"></i> Order`;
+            orderBtn.addEventListener('click', function() {
+                const ticker = this.getAttribute('data-ticker');
+                if (confirm(`Place orders for both call and put options for ${ticker}?`)) {
+                    placeTickerOrder(ticker)
+                        .then(() => {
+                            alert(`Orders for ${ticker} placed successfully!`);
+                            loadPendingOrders();
+                        })
+                        .catch(error => {
+                            alert(`Error placing orders for ${ticker}: ${error.message}`);
+                        });
+                }
+            });
+            
+            // Add the OTM info to the Sell Call cell and the buttons to the Actions cell (last column)
+            const btnContainer = document.createElement('div');
+            btnContainer.className = 'mt-2 d-flex gap-2';
+            btnContainer.appendChild(refreshBtn);
+            btnContainer.appendChild(orderBtn);
             
             // Add OTM info to the Sell Call cell if not already present
             if (tdElements[4].querySelector('.text-muted') === null) {
                 tdElements[4].appendChild(otmInfo);
             }
             
-            // Add refresh button to the Actions column (last column - index 8)
-            if (tdElements[8] && tdElements[8].querySelector('.fetch-btn') === null) {
-                tdElements[8].appendChild(fetchBtnContainer);
+            // Add buttons to the Actions column (last column - index 8)
+            if (tdElements[8]) {
+                tdElements[8].innerHTML = ''; // Clear existing content
+                tdElements[8].appendChild(btnContainer);
             }
         }
         
@@ -771,12 +910,12 @@
                     });
                 }
                 
-                // Add order button handler
-                const orderBtn = document.getElementById('order-selected-option');
-                if (orderBtn) {
-                    orderBtn.addEventListener('click', function() {
-                        console.log('Order button clicked');
-                        placeOrder();
+                // Add order all button handler
+                const orderAllBtn = document.getElementById('order-all-options');
+                if (orderAllBtn) {
+                    orderAllBtn.addEventListener('click', function() {
+                        console.log('Order all button clicked');
+                        orderAllOptions();
                     });
                 }
                 
