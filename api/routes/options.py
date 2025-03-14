@@ -24,11 +24,10 @@ def otm_options():
     """
     # Get parameters from request
     ticker = request.args.get('tickers')
-    otm_percentage = float(request.args.get('otm_percentage', 10))
-
-    options_service = OptionsService()
+    otm_percentage = float(request.args.get('otm', 10))
     
-     # Call the service with appropriate parameters
+    # Use the existing module-level instance instead of creating a new one
+    # Call the service with appropriate parameters
     result = options_service.get_otm_options(
         ticker=ticker,
         otm_percentage=otm_percentage

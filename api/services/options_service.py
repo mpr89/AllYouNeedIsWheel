@@ -31,119 +31,50 @@ class OptionsService:
         
     def _ensure_connection(self):
         """
-        Ensure that the IB connection exists and is connected
+        Ensure that the IB connection exists and is connected.
+        Reuses existing connection if already established.
         """
         try:
-            if self.connection is None or not self.connection.is_connected():
-                # Generate a unique client ID based on current timestamp and random number
-                # to avoid conflicts with other connections
-                unique_client_id = int(time.time() % 10000) + random.randint(1000, 9999)
-                logger.info(f"Creating new TWS connection with client ID: {unique_client_id}")
-                
-                self.connection = IBConnection(
-                    host=self.config.get('host', '127.0.0.1'),
-                    port=self.config.get('port', 7497),
-                    client_id=unique_client_id,  # Use the unique client ID instead of fixed ID 1
-                    timeout=self.config.get('timeout', 20),
-                    readonly=self.config.get('readonly', True)
-                )
-                
-                # Try to connect with proper error handling
-                if not self.connection.connect():
-                    logger.error("Failed to connect to TWS/IB Gateway")
+            # If we already have a connected instance, just return it
+            if self.connection is not None and self.connection.is_connected():
+                logger.debug("Reusing existing TWS connection")
+                return self.connection
+            
+            # If connection exists but is disconnected, try to reconnect with same client ID
+            if self.connection is not None:
+                logger.info("Existing connection found but disconnected, attempting to reconnect")
+                if self.connection.connect():
+                    logger.info("Successfully reconnected to TWS/IB Gateway with existing client ID")
+                    return self.connection
                 else:
-                    logger.info("Successfully connected to TWS/IB Gateway")
-            return self.connection
+                    logger.warning("Failed to reconnect with existing client ID, will create new connection")
+        
+            # No connection or reconnection failed, create a new one
+            # Generate a unique client ID based on current timestamp and random number
+            unique_client_id = int(time.time() % 10000) + random.randint(1000, 9999)
+            logger.info(f"Creating new TWS connection with client ID: {unique_client_id}")
+            
+            self.connection = IBConnection(
+                host=self.config.get('host', '127.0.0.1'),
+                port=self.config.get('port', 7497),
+                client_id=unique_client_id,  # Use the unique client ID instead of fixed ID 1
+                timeout=self.config.get('timeout', 20),
+                readonly=self.config.get('readonly', True)
+            )
+            
+            # Try to connect with proper error handling
+            if not self.connection.connect():
+                logger.error("Failed to connect to TWS/IB Gateway")
+                return None
+            else:
+                logger.info("Successfully connected to TWS/IB Gateway")
+                return self.connection
         except Exception as e:
             logger.error(f"Error ensuring connection: {str(e)}")
             if "There is no current event loop" in str(e):
                 logger.error("Asyncio event loop error - please check connection.py for proper handling")
             return None
         
-    def _get_stock_data(self, ticker):
-        """
-        Get stock data using the IBConnection
-        
-        Args:
-            ticker (str): Stock ticker symbol
-            
-        Returns:
-            dict: Stock data dictionary
-        """
-        conn = self._ensure_connection()
-        
-        try:
-            # Use the get_stock_data method which now has proper fallbacks to mock data
-            stock_data = conn.get_stock_data(ticker)
-            
-            if not stock_data:
-                logger.warning(f"Failed to get stock data for {ticker}, returning default values")
-                # Return a default structure
-                return {
-                    'symbol': ticker,
-                    'last': 0,
-                    'price': 0,
-                    'bid': 0,
-                    'ask': 0,
-                    'high': 0,
-                    'low': 0,
-                    'close': 0,
-                    'open': 0,
-                    'volume': 0,
-                    'timestamp': datetime.now().isoformat(),
-                    'error': 'Failed to retrieve data'
-                }
-            
-            # Ensure we have a 'price' field which some code might expect
-            if 'price' not in stock_data and 'last' in stock_data:
-                stock_data['price'] = stock_data['last']
-                
-            return stock_data
-        except Exception as e:
-            logger.error(f"Error getting stock data for {ticker}: {str(e)}")
-            return {
-                'symbol': ticker,
-                'last': 0,
-                'price': 0,
-                'bid': 0,
-                'ask': 0,
-                'high': 0,
-                'low': 0,
-                'close': 0,
-                'open': 0,
-                'volume': 0,
-                'timestamp': datetime.now().isoformat(),
-                'error': str(e)
-            }
-        
-    
-    def get_option_chain(self, ticker, expiration=None):
-        """
-        Get the full option chain for a ticker
-        
-        Args:
-            ticker (str): Stock ticker symbol
-            expiration (str, optional): Expiration date (YYYYMMDD format)
-            
-        Returns:
-            dict: Full option chain data
-        """
-        conn = self._ensure_connection()
-        
-        # Determine expiration date if not provided
-        if expiration is None:
-            expiration = get_closest_friday().strftime('%Y%m%d')
-            
-        # Get the full option chain
-        chain = conn.get_option_chain(ticker, expiration)
-        
-        # Transform to API response format
-        return {
-            'ticker': ticker,
-            'expiration': expiration,
-            'chain': chain
-        }
-    
     def _generate_mock_option_data(self, ticker, stock_price, otm_percentage, for_calls, for_puts, expiration):
         """
         Generate mock option data when real data is not available
@@ -364,24 +295,12 @@ class OptionsService:
     def get_otm_options(self, ticker=None, otm_percentage=10):
         start_time = time.time()
         
-        # Initialize a new connection with real-time flag if needed
-        if self.connection is None or not self.connection.is_connected():
-            logger.info("Creating new real-time connection for options")
-            unique_client_id = int(time.time() % 10000) + random.randint(1000, 9999)
-            self.connection = IBConnection(
-                host=self.config.get('host', '127.0.0.1'),
-                port=self.config.get('port', 7497),
-                client_id=unique_client_id,
-                timeout=self.config.get('timeout', 20),
-                readonly=self.config.get('readonly', True)
-            )
-            logger.info(f"Attempting to connect with real-time mode with client ID {unique_client_id}")
-            connected = self.connection.connect()
-            logger.info(f"Connection attempt result: {'Connected' if connected else 'Failed'}")
-        else:
-            self._ensure_connection()
+        # Use _ensure_connection instead of creating a new connection each time
+        conn = self._ensure_connection()
+        if not conn:
+            logger.error("Failed to establish connection to IB")
         
-        is_market_open = self.connection._is_market_hours() if self.connection and self.connection.is_connected() else False
+        is_market_open = conn._is_market_hours() if conn and conn.is_connected() else False
         # If no tickers provided, get them from portfolio
         tickers = [ticker]
         if not tickers:
@@ -394,7 +313,7 @@ class OptionsService:
         
         for ticker in tickers:
             try:
-                ticker_data = self._process_ticker_for_otm(self.connection, ticker, otm_percentage, expiration, is_market_open)
+                ticker_data = self._process_ticker_for_otm(conn, ticker, otm_percentage, expiration, is_market_open)
                 result[ticker] = ticker_data
             except Exception as e:
                 logger.error(f"Error processing {ticker} for OTM options: {e}")
@@ -470,8 +389,8 @@ class OptionsService:
         else:
             try:
                 logger.info(f"Generating mock options data for {ticker} with {otm_percentage}% OTM")
-                # Both calls and puts because we filter later
-                options_data = self._generate_mock_option_data(ticker, stock_price, otm_percentage, expiration)
+                # Pass both for_calls and for_puts as True to generate both types of options
+                options_data = self._generate_mock_option_data(ticker, stock_price, otm_percentage, True, True, expiration)
                 logger.info(f"Successfully generated mock options data for {ticker}")
             except Exception as e:
                 logger.error(f"Error generating mock options data for {ticker}: {e}")
@@ -633,7 +552,7 @@ class OptionsService:
                                 
                         elif option.get('option_type') == 'PUT':
                             position_value = strike * 100 * int(100 / 100)  # Cash needed to secure puts
-                            max_contracts = int(position_value / (strike * 100)) if strike > 0 else 1
+                            max_contracts = int(position_value / (strike * 100))
                             premium_per_contract = last * 100  # Premium per contract
                             total_premium = premium_per_contract * max_contracts
                             return_on_cash = (total_premium / position_value) * 100 if position_value > 0 else 0
