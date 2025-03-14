@@ -198,7 +198,7 @@
             // Show loading message - update to use pendingOrdersTable directly
             pendingOrdersTable.innerHTML = '<tr><td colspan="7" class="text-center">Loading orders...</td></tr>';
             
-            fetch('/api/options/orders?status=pending')
+            fetch('/api/options/pending-orders')
                 .then(response => response.json())
                 .then(data => {
                     if (!data || !data.orders || data.orders.length === 0) {
