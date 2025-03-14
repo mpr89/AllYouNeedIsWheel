@@ -196,13 +196,13 @@
             if (!pendingOrdersTable) return;
             
             // Show loading message - update to use pendingOrdersTable directly
-            pendingOrdersTable.innerHTML = '<tr><td colspan="7" class="text-center">Loading orders...</td></tr>';
+            pendingOrdersTable.innerHTML = '<tr><td colspan="9" class="text-center">Loading orders...</td></tr>';
             
             fetch('/api/options/pending-orders')
                 .then(response => response.json())
                 .then(data => {
                     if (!data || !data.orders || data.orders.length === 0) {
-                        pendingOrdersTable.innerHTML = '<tr><td colspan="7" class="text-center">No pending orders found</td></tr>';
+                        pendingOrdersTable.innerHTML = '<tr><td colspan="9" class="text-center">No pending orders found</td></tr>';
                         return;
                     }
                     
@@ -227,12 +227,14 @@
                         // Create row
                         const row = document.createElement('tr');
                         row.innerHTML = `
-                            <td>${order.id}</td>
-                            <td>${order.ticker}</td>
-                            <td>${order.quantity}</td>
-                            <td>${order.price}</td>
-                            <td><span class="badge bg-${getBadgeColor(order.status)}">${order.status}</span></td>
                             <td>${formattedDate}</td>
+                            <td>${order.ticker}</td>
+                            <td>${order.option_type || 'N/A'}</td>
+                            <td>${formatStrike(order.strike)}</td>
+                            <td>${formatDate(order.expiration) || 'N/A'}</td>
+                            <td>${formatCurrency(order.premium) || '$0.00'}</td>
+                            <td>${order.quantity || 1}</td>
+                            <td><span class="badge bg-${getBadgeColor(order.status)}">${order.status}</span></td>
                             <td>
                                 <button class="btn btn-sm btn-success execute-btn" data-order-id="${order.id}">Execute</button>
                                 <button class="btn btn-sm btn-danger cancel-btn" data-order-id="${order.id}">Cancel</button>
@@ -261,7 +263,7 @@
                 })
                 .catch(error => {
                     console.error('Error loading pending orders:', error);
-                    pendingOrdersTable.innerHTML = `<tr><td colspan="7" class="text-center text-danger">Error loading orders: ${error.message}</td></tr>`;
+                    pendingOrdersTable.innerHTML = `<tr><td colspan="9" class="text-center text-danger">Error loading orders: ${error.message}</td></tr>`;
                 });
         }
         
