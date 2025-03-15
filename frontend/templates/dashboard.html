@@ -850,16 +850,14 @@
             }
         }
         
-        // Refresh all tickers
+        // Refresh all tickers in parallel
         function refreshAllOptions() {
             const tickers = Object.keys(tickersData);
             if (tickers.length === 0) return;
             
-            // Process each ticker with a small delay
-            tickers.forEach((ticker, index) => {
-                setTimeout(() => {
-                    fetchOptionsForTicker(ticker);
-                }, index * 1000); // 1 second delay between each
+            // Process all tickers in parallel
+            tickers.forEach((ticker) => {
+                fetchOptionsForTicker(ticker);
             });
         }
         
