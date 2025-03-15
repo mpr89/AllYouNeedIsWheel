@@ -460,10 +460,11 @@ class OptionsService:
                 "is_mock": result.get('is_mock', False)
             }
             
-            # Update order status to 'processing'
+            # Update order status to 'processing' and mark as executed
             db.update_order_status(
                 order_id=order_id,
                 status="processing",
+                executed=True,  # Mark order as executed
                 execution_details=execution_details
             )
             
