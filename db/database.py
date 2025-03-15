@@ -29,7 +29,7 @@ class OptionsDatabase:
         self._create_tables_if_not_exist()
     
     def _create_tables_if_not_exist(self):
-        """Create necessary tables if they don't exist"""
+        """Create necessary tables with flattened structure"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -48,7 +48,7 @@ class OptionsDatabase:
             )
         ''')
         
-        # Create pending orders table
+        # Create orders table with flattened structure 
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS orders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -62,7 +62,37 @@ class OptionsDatabase:
                 quantity INTEGER DEFAULT 1,
                 status TEXT DEFAULT 'pending',
                 executed BOOLEAN DEFAULT 0,
-                details TEXT
+                
+                -- Price data
+                bid REAL DEFAULT 0,
+                ask REAL DEFAULT 0,
+                last REAL DEFAULT 0,
+                
+                -- Greeks
+                delta REAL DEFAULT 0,
+                gamma REAL DEFAULT 0,
+                theta REAL DEFAULT 0,
+                vega REAL DEFAULT 0,
+                implied_volatility REAL DEFAULT 0,
+                
+                -- Market data
+                open_interest INTEGER DEFAULT 0,
+                volume INTEGER DEFAULT 0,
+                is_mock BOOLEAN DEFAULT 0,
+                
+                -- Earnings data
+                earnings_max_contracts INTEGER DEFAULT 0,
+                earnings_premium_per_contract REAL DEFAULT 0,
+                earnings_total_premium REAL DEFAULT 0,
+                earnings_return_on_cash REAL DEFAULT 0,
+                earnings_return_on_capital REAL DEFAULT 0,
+                
+                -- Execution data
+                ib_order_id TEXT,
+                ib_status TEXT,
+                filled INTEGER DEFAULT 0,
+                remaining INTEGER DEFAULT 0,
+                avg_fill_price REAL DEFAULT 0
             )
         ''')
         
@@ -117,7 +147,7 @@ class OptionsDatabase:
     
     def save_order(self, order_data):
         """
-        Save an option order to the database
+        Save an option order to the database using flattened structure
         
         Args:
             order_data (dict): Option order data
@@ -133,21 +163,54 @@ class OptionsDatabase:
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             ticker = order_data.get('ticker', '')
             option_type = order_data.get('option_type', '')
-            action = 'SELL'  # Default action is sell for options
+            action = order_data.get('action', 'SELL')  # Default action is sell for options
             strike = order_data.get('strike', 0)
             expiration = order_data.get('expiration', '')
             premium = order_data.get('premium', 0)
             quantity = order_data.get('quantity', 1)
             
-            # Convert order_data to JSON for details
-            details = json.dumps(order_data)
+            # Extract pricing data
+            bid = order_data.get('bid', 0)
+            ask = order_data.get('ask', 0)
+            last = order_data.get('last', 0)
             
-            # Insert into database
+            # Extract greeks
+            delta = order_data.get('delta', 0)
+            gamma = order_data.get('gamma', 0)
+            theta = order_data.get('theta', 0)
+            vega = order_data.get('vega', 0)
+            implied_volatility = order_data.get('implied_volatility', 0)
+            
+            # Extract market data
+            open_interest = order_data.get('open_interest', 0)
+            volume = order_data.get('volume', 0)
+            is_mock = order_data.get('is_mock', False)
+            
+            # Extract earnings data
+            earnings_max_contracts = order_data.get('earnings_max_contracts', 0)
+            earnings_premium_per_contract = order_data.get('earnings_premium_per_contract', 0)
+            earnings_total_premium = order_data.get('earnings_total_premium', 0)
+            earnings_return_on_cash = order_data.get('earnings_return_on_cash', 0)
+            earnings_return_on_capital = order_data.get('earnings_return_on_capital', 0)
+            
+            # Insert order with all fields using the flattened structure
             cursor.execute('''
                 INSERT INTO orders 
-                (timestamp, ticker, option_type, action, strike, expiration, premium, quantity, status, executed, details)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (timestamp, ticker, option_type, action, strike, expiration, premium, quantity, 'pending', False, details))
+                (timestamp, ticker, option_type, action, strike, expiration, premium, quantity, 
+                 bid, ask, last, delta, gamma, theta, vega, implied_volatility, 
+                 open_interest, volume, is_mock,
+                 earnings_max_contracts, earnings_premium_per_contract, 
+                 earnings_total_premium, earnings_return_on_cash, 
+                 earnings_return_on_capital, status, executed)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                timestamp, ticker, option_type, action, strike, expiration, premium, quantity, 
+                bid, ask, last, delta, gamma, theta, vega, implied_volatility, 
+                open_interest, volume, is_mock,
+                earnings_max_contracts, earnings_premium_per_contract, 
+                earnings_total_premium, earnings_return_on_cash, 
+                earnings_return_on_capital, 'pending', False
+            ))
             
             record_id = cursor.lastrowid
             conn.commit()
@@ -170,37 +233,7 @@ class OptionsDatabase:
         Returns:
             list: List of order dictionaries
         """
-        try:
-            conn = sqlite3.connect(self.db_path)
-            conn.row_factory = sqlite3.Row  # This enables column access by name
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                SELECT * FROM orders
-                WHERE executed = ?
-                ORDER BY timestamp DESC
-                LIMIT ?
-            ''', (executed, limit))
-            
-            rows = cursor.fetchall()
-            conn.close()
-            
-            # Convert rows to dictionaries
-            orders = []
-            for row in rows:
-                order = dict(row)
-                # Parse details JSON if available
-                if 'details' in order and order['details']:
-                    try:
-                        order['details'] = json.loads(order['details'])
-                    except:
-                        pass
-                orders.append(order)
-                
-            return orders
-        except Exception as e:
-            print(f"Error getting pending orders: {str(e)}")
-            return []
+        return self.get_orders(executed=executed, limit=limit)
     
     def update_order_status(self, order_id, status, executed=False, execution_details=None):
         """
@@ -219,22 +252,45 @@ class OptionsDatabase:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            if execution_details:
-                # Convert execution details to JSON string
-                execution_details_json = json.dumps(execution_details)
-                
-                cursor.execute('''
-                    UPDATE orders
-                    SET status = ?, executed = ?, details = ?
-                    WHERE id = ?
-                ''', (status, executed, execution_details_json, order_id))
-            else:
-                cursor.execute('''
-                    UPDATE orders
-                    SET status = ?, executed = ?
-                    WHERE id = ?
-                ''', (status, executed, order_id))
+            # Start with basic update query
+            update_query = '''
+                UPDATE orders
+                SET status = ?, executed = ?
+                WHERE id = ?
+            '''
+            params = [status, executed, order_id]
             
+            # If we have execution details, update those fields too
+            if execution_details and isinstance(execution_details, dict):
+                set_clauses = []
+                
+                # Map execution details to database fields
+                field_mappings = {
+                    'ib_order_id': 'ib_order_id',
+                    'ib_status': 'ib_status',
+                    'filled': 'filled',
+                    'remaining': 'remaining',
+                    'avg_fill_price': 'avg_fill_price',
+                    'is_mock': 'is_mock'
+                }
+                
+                # Check for each field in the mapping
+                for api_field, db_field in field_mappings.items():
+                    if api_field in execution_details:
+                        set_clauses.append(f"{db_field} = ?")
+                        params.append(execution_details[api_field])
+                
+                # If we have additional fields to set, add them to the query
+                if set_clauses:
+                    # Reconstruct the query with the additional fields
+                    update_query = '''
+                        UPDATE orders
+                        SET status = ?, executed = ?, {}
+                        WHERE id = ?
+                    '''.format(', '.join(set_clauses))
+            
+            # Execute the query
+            cursor.execute(update_query, params)
             conn.commit()
             conn.close()
             
@@ -302,15 +358,8 @@ class OptionsDatabase:
                 
             # Convert row to dictionary
             order = dict(row)
-            
-            # Parse details JSON if available
-            if 'details' in order and order['details']:
-                try:
-                    order['details'] = json.loads(order['details'])
-                except:
-                    pass
-                
             return order
+            
         except Exception as e:
             print(f"Error getting order: {str(e)}")
             return None
@@ -361,12 +410,6 @@ class OptionsDatabase:
             orders = []
             for row in rows:
                 order = dict(row)
-                # Parse details JSON if available
-                if 'details' in order and order['details']:
-                    try:
-                        order['details'] = json.loads(order['details'])
-                    except:
-                        pass
                 orders.append(order)
                 
             return orders

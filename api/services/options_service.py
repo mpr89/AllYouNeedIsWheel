@@ -78,18 +78,16 @@ class OptionsService:
         
     def _generate_mock_option_data(self, ticker, stock_price, otm_percentage, expiration):
         """
-        Generate mock option data when real data is not available
+        Generate mock option data when real data is not available, using flattened data structure
         
         Args:
             ticker (str): Stock ticker symbol
             stock_price (float): Current stock price
             otm_percentage (float): Percentage out of the money
-            for_calls (bool): Whether to generate call options
-            for_puts (bool): Whether to generate put options
             expiration (str): Expiration date in YYYYMMDD format
             
         Returns:
-            dict: Mock option data
+            dict: Mock option data with flattened structure
         """
         logger.info(f"Generating mock option data for {ticker} at price {stock_price}")
         
@@ -181,7 +179,7 @@ class OptionsService:
         else:
             return_on_capital = 0
         
-        # Create call option data with earnings
+        # Create call option data with flattened earnings data
         result['call'] = {
             'symbol': f"{ticker}{expiration}C{int(call_strike)}",
             'strike': call_strike,
@@ -198,13 +196,11 @@ class OptionsService:
             'theta': round(-(call_price * 0.01) / max(1, days_to_expiry), 5),
             'vega': round(call_price * 0.1, 5),
             'is_mock': True,
-            # Add earnings data
-            'earnings': {
-                'max_contracts': max_contracts,
-                'premium_per_contract': round(premium_per_contract, 2),
-                'total_premium': round(total_premium, 2),
-                'return_on_capital': round(return_on_capital, 2)
-            }
+            # Add flattened earnings data 
+            'earnings_max_contracts': max_contracts,
+            'earnings_premium_per_contract': round(premium_per_contract, 2),
+            'earnings_total_premium': round(total_premium, 2),
+            'earnings_return_on_capital': round(return_on_capital, 2)
         }
         
         # Calculate intrinsic value for put
@@ -247,7 +243,7 @@ class OptionsService:
         else:
             return_on_cash = 0
         
-        # Create put option data with earnings
+        # Create put option data with flattened earnings data
         result['put'] = {
             'symbol': f"{ticker}{expiration}P{int(put_strike)}",
             'strike': put_strike,
@@ -264,13 +260,11 @@ class OptionsService:
             'theta': round(-(put_price * 0.01) / max(1, days_to_expiry), 5),
             'vega': round(put_price * 0.1, 5),
             'is_mock': True,
-            # Add earnings data
-            'earnings': {
-                'max_contracts': max_contracts,
-                'premium_per_contract': round(premium_per_contract, 2),
-                'total_premium': round(total_premium, 2),
-                'return_on_cash': round(return_on_cash, 2)
-            }
+            # Add flattened earnings data
+            'earnings_max_contracts': max_contracts,
+            'earnings_premium_per_contract': round(premium_per_contract, 2),
+            'earnings_total_premium': round(total_premium, 2),
+            'earnings_return_on_cash': round(return_on_cash, 2)
         }
     
         return result
@@ -344,15 +338,7 @@ class OptionsService:
                     "error": "Failed to connect to TWS"
                 }, 500
                 
-            # Parse order details
-            details = order.get('details', {})
-            if isinstance(details, str):
-                try:
-                    details = json.loads(details)
-                except:
-                    details = {}
-                    
-            # Extract order information
+            # Get order details directly (no more nested JSON)
             ticker = order.get('ticker')
             if not ticker:
                 conn.disconnect()
@@ -377,7 +363,6 @@ class OptionsService:
             strike = order.get('strike')
             option_type = order.get('option_type')
             
-            print(expiry, strike, option_type)
             if not all([expiry, strike, option_type]):
                 conn.disconnect()
                 return {
@@ -385,11 +370,45 @@ class OptionsService:
                     "error": "Missing option details (expiry, strike, or option_type)"
                 }, 400
                 
-            # Get limit price
-            # Calculate limit price (midpoint between bid and ask)
-            bid = details.get("bid", 0)
-            ask = details.get("ask", 0)
-            limit_price = (bid + ask) / 2 if bid is not None and ask is not None else (bid or ask or 0)
+            # Get limit price - direct access from flattened structure
+            try:
+                # Get bid and ask directly from order fields
+                bid = float(order.get('bid', 0))
+                ask = float(order.get('ask', 0))
+                
+                print(f"Bid: {bid}, Ask: {ask}")  # Debug output
+                
+                # Calculate appropriate limit price
+                if bid > 0 and ask > 0:
+                    limit_price = (bid + ask) / 2
+                    print(f"Using midpoint price: {limit_price}")
+                elif bid > 0:
+                    limit_price = bid
+                    print(f"Using bid price: {limit_price}")
+                elif ask > 0:
+                    limit_price = ask
+                    print(f"Using ask price: {limit_price}")
+                else:
+                    # Try premium as fallback
+                    premium = float(order.get('premium', 0))
+                    if premium > 0:
+                        limit_price = premium
+                        print(f"Using premium price: {limit_price}")
+                    else:
+                        limit_price = 0.05
+                        print("Using minimum price of 0.05")
+                    
+                # Ensure minimum price and round properly
+                if limit_price < 0.01:
+                    limit_price = 0.05
+                limit_price = round(limit_price, 2)
+                
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Error calculating limit price: {e}. Using default.")
+                limit_price = 0.05
+            
+            print(f"Final limit price: {limit_price}")
+            
             # Create contract
             contract = conn.create_option_contract(
                 symbol=ticker,
@@ -412,7 +431,8 @@ class OptionsService:
                 order_type=order_type,
                 limit_price=limit_price
             )
-            
+            print(f"Order details: {order}")
+            print(f"Created IB order: {ib_order}")
             if not ib_order:
                 conn.disconnect()
                 return {
@@ -542,7 +562,6 @@ class OptionsService:
                 # Adjust to standard strike increments
                 call_strike = self._adjust_to_standard_strike(call_strike)
                 put_strike = self._adjust_to_standard_strike(put_strike)
-                print(ticker, expiration, 'C', call_strike)
                 call_option = conn.get_option_chain(ticker, expiration,'C',call_strike)
                 put_option = conn.get_option_chain(ticker, expiration,'P',put_strike)
                 options = [call_option,put_option]
@@ -624,7 +643,7 @@ class OptionsService:
 
     def _process_options_chain(self, options_chains, ticker, stock_price, otm_percentage):
         """
-        Process options chain data and format it similar to mock data format
+        Process options chain data and format it with flattened structure
         
         Args:
             options_chains (list): List of option chain objects from IB
@@ -696,7 +715,7 @@ class OptionsService:
                         if isinstance(open_interest, float) and math.isnan(open_interest):
                             open_interest = 0
                         
-                        # Format option data
+                        # Format option data with flattened structure
                         option_data = {
                             'symbol': f"{ticker}{option.get('expiration')}{'C' if option.get('option_type') == 'CALL' else 'P'}{int(strike)}",
                             'strike': strike,
@@ -714,7 +733,7 @@ class OptionsService:
                             'is_mock': False
                         }
                         
-                        # Calculate earnings data based on option type and add to the appropriate list
+                        # Calculate and add flattened earnings data based on option type 
                         if option.get('option_type') == 'CALL':
                             position_qty = 100  # Assume 100 shares per standard position
                             max_contracts = int(position_qty / 100)  # Each contract represents 100 shares
@@ -727,13 +746,11 @@ class OptionsService:
                             else:
                                 return_on_capital = 0
                             
-                            # Add earnings data
-                            option_data['earnings'] = {
-                                'max_contracts': max_contracts,
-                                'premium_per_contract': round(premium_per_contract, 2),
-                                'total_premium': round(total_premium, 2),
-                                'return_on_capital': round(return_on_capital, 2)
-                            }
+                            # Add flattened earnings data
+                            option_data['earnings_max_contracts'] = max_contracts
+                            option_data['earnings_premium_per_contract'] = round(premium_per_contract, 2)
+                            option_data['earnings_total_premium'] = round(total_premium, 2)
+                            option_data['earnings_return_on_capital'] = round(return_on_capital, 2)
                             
                             # Add to calls list directly
                             result['calls'].append(option_data)
@@ -750,13 +767,11 @@ class OptionsService:
                             else:
                                 return_on_cash = 0
                             
-                            # Add earnings data
-                            option_data['earnings'] = {
-                                'max_contracts': max_contracts,
-                                'premium_per_contract': round(premium_per_contract, 2),
-                                'total_premium': round(total_premium, 2),
-                                'return_on_cash': round(return_on_cash, 2)
-                            }
+                            # Add flattened earnings data
+                            option_data['earnings_max_contracts'] = max_contracts
+                            option_data['earnings_premium_per_contract'] = round(premium_per_contract, 2)
+                            option_data['earnings_total_premium'] = round(total_premium, 2)
+                            option_data['earnings_return_on_cash'] = round(return_on_cash, 2)
                             
                             # Add to puts list directly
                             result['puts'].append(option_data)
