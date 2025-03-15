@@ -1,0 +1,45 @@
+<!-- Options Opportunities Section -->
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card shadow-sm">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Option Opportunities</h5>
+                <div class="d-flex align-items-center">
+                    <button class="btn btn-sm btn-outline-primary me-2" id="refresh-all-options">
+                        <i class="bi bi-arrow-repeat"></i> Refresh All
+                    </button>
+                    <button class="btn btn-sm btn-outline-success " id="order-all-options">
+                        <i class="bi bi-plus-circle"></i> Order All
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Symbol</th>
+                                <th>Price</th>
+                                <th>Position</th>
+                                <th>OTM %</th>
+                                <th>Sell Call</th>
+                                <th>Call Premium</th>
+                                <th>Sell Put</th>
+                                <th>Put Premium</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="options-table">
+                            <tr>
+                                <td colspan="9" class="text-center">Loading options data...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="card-footer">
+                <small class="text-muted">Options shown are Out of The Money (OTM). Higher percentage = further OTM = lower premium but less risk.</small>
+            </div>
+        </div>
+    </div>
+</div> 

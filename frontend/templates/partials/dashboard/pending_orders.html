@@ -1,0 +1,40 @@
+<!-- Pending Orders Section -->
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card shadow-sm">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Pending Option Orders</h5>
+                <div class="d-flex align-items-center">
+                    <button class="btn btn-sm btn-outline-primary" id="refresh-pending-orders">
+                        <i class="bi bi-arrow-repeat"></i> Refresh
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Symbol</th>
+                                <th>Type</th>
+                                <th>Strike</th>
+                                <th>Expiration</th>
+                                <th>Premium</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="pending-orders-table">
+                            <tr>
+                                <td colspan="7" class="text-center">Loading pending orders...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="card-footer">
+                <small class="text-muted">Manage your pending option orders here. Click Execute to send an order to Interactive Brokers.</small>
+            </div>
+        </div>
+    </div>
+</div> 

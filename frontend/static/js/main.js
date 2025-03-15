@@ -137,4 +137,125 @@ document.addEventListener('DOMContentLoaded', function() {
     popoverTriggerList.map(function (popoverTriggerEl) {
         return new bootstrap.Popover(popoverTriggerEl);
     });
-}); 
+});
+
+// Set the current year in the footer
+document.addEventListener('DOMContentLoaded', function() {
+    const currentYearElement = document.getElementById('current-year');
+    if (currentYearElement) {
+        currentYearElement.textContent = new Date().getFullYear();
+    }
+    
+    // Add a content container for alerts if it doesn't exist
+    const mainContainer = document.querySelector('main');
+    if (mainContainer && !document.querySelector('.content-container')) {
+        const contentContainer = document.createElement('div');
+        contentContainer.className = 'content-container';
+        mainContainer.prepend(contentContainer);
+    }
+});
+
+// Add CustomEvent polyfill for older browsers
+(function() {
+    if (typeof window.CustomEvent === 'function') return false;
+    
+    function CustomEvent(event, params) {
+        params = params || { bubbles: false, cancelable: false, detail: null };
+        const evt = document.createEvent('CustomEvent');
+        evt.initCustomEvent(event, params.bubbles, params.cancelable, params.detail);
+        return evt;
+    }
+    
+    window.CustomEvent = CustomEvent;
+})();
+
+// Add Array.from polyfill for older browsers
+if (!Array.from) {
+    Array.from = function(arrayLike) {
+        return [].slice.call(arrayLike);
+    };
+}
+
+// Add Promise polyfill for older browsers (minimal implementation)
+if (!window.Promise) {
+    window.Promise = function(executor) {
+        this.then = function(onFulfilled) {
+            this.onFulfilled = onFulfilled;
+            return this;
+        };
+        this.catch = function(onRejected) {
+            this.onRejected = onRejected;
+            return this;
+        };
+        
+        const resolve = (value) => {
+            setTimeout(() => {
+                if (this.onFulfilled) this.onFulfilled(value);
+            }, 0);
+        };
+        
+        const reject = (reason) => {
+            setTimeout(() => {
+                if (this.onRejected) this.onRejected(reason);
+            }, 0);
+        };
+        
+        executor(resolve, reject);
+    };
+    
+    window.Promise.all = function(promises) {
+        return new Promise((resolve, reject) => {
+            let results = [];
+            let completedCount = 0;
+            
+            promises.forEach((promise, index) => {
+                promise.then(value => {
+                    results[index] = value;
+                    completedCount++;
+                    
+                    if (completedCount === promises.length) {
+                        resolve(results);
+                    }
+                }).catch(reject);
+            });
+        });
+    };
+}
+
+// Add fetch polyfill (minimal implementation, for modern browsers that don't support fetch)
+if (!window.fetch) {
+    console.warn('Fetch API not available. Using XMLHttpRequest polyfill. Consider updating your browser.');
+    
+    window.fetch = function(url, options) {
+        return new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open(options?.method || 'GET', url);
+            
+            if (options?.headers) {
+                Object.keys(options.headers).forEach(key => {
+                    xhr.setRequestHeader(key, options.headers[key]);
+                });
+            }
+            
+            xhr.onload = function() {
+                const response = {
+                    ok: xhr.status >= 200 && xhr.status < 300,
+                    status: xhr.status,
+                    json: function() {
+                        return Promise.resolve(JSON.parse(xhr.responseText));
+                    },
+                    text: function() {
+                        return Promise.resolve(xhr.responseText);
+                    }
+                };
+                resolve(response);
+            };
+            
+            xhr.onerror = function() {
+                reject(new Error('Network error'));
+            };
+            
+            xhr.send(options?.body || null);
+        });
+    };
+} 
