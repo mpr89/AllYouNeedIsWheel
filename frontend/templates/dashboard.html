@@ -1030,12 +1030,11 @@
                         console.log(`Row ${row.id} has ${cells.length} cells`);
                     });
                     
-                    // Load first ticker automatically
+                    // Load all tickers automatically
                     if (Object.keys(tickersData).length > 0) {
-                        console.log('Auto-loading first ticker');
-                        const firstTicker = Object.keys(tickersData)[0];
+                        console.log('Auto-loading all tickers');
                         setTimeout(() => {
-                            fetchOptionsForTicker(firstTicker);
+                            refreshAllOptions();
                         }, 500);
                     }
                 })
