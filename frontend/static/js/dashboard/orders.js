@@ -38,7 +38,7 @@ function updatePendingOrdersTable() {
     pendingOrdersTable.innerHTML = '';
     
     if (pendingOrdersData.length === 0) {
-        pendingOrdersTable.innerHTML = '<tr><td colspan="7" class="text-center">No pending orders found</td></tr>';
+        pendingOrdersTable.innerHTML = '<tr><td colspan="8" class="text-center">No pending orders found</td></tr>';
         return;
     }
     
@@ -71,6 +71,31 @@ function updatePendingOrdersTable() {
         // Get the badge color for status
         const badgeColor = getBadgeColor(order.status);
         
+        // IB order information
+        const ibOrderId = order.ib_order_id || 'Not sent';
+        const ibStatus = order.ib_status || '-';
+        
+        // Status area with IB info
+        let statusHtml = `
+            <span class="badge bg-${badgeColor}">${order.status}</span>
+            <br>
+            <small class="text-muted">${createdAt}</small>
+        `;
+        
+        // Add IB info if order has been executed
+        if (order.status !== 'pending') {
+            statusHtml += `
+                <br>
+                <small class="text-muted mt-1">
+                    <strong>IB ID:</strong> ${ibOrderId}
+                </small>
+                <br>
+                <small class="text-muted">
+                    <strong>Status:</strong> ${ibStatus}
+                </small>
+            `;
+        }
+        
         // Create the row HTML
         row.innerHTML = `
             <td>${order.ticker}</td>
@@ -78,11 +103,7 @@ function updatePendingOrdersTable() {
             <td>${strike}</td>
             <td>${order.expiration || 'N/A'}</td>
             <td>${premium}</td>
-            <td>
-                <span class="badge bg-${badgeColor}">${order.status}</span>
-                <br>
-                <small class="text-muted">${createdAt}</small>
-            </td>
+            <td>${statusHtml}</td>
             <td>
                 <div class="btn-group btn-group-sm">
                     <button class="btn btn-outline-primary execute-order" data-order-id="${order.id}" ${order.status !== 'pending' ? 'disabled' : ''}>
@@ -137,11 +158,38 @@ function addOrdersTableEventListeners() {
  */
 async function executeOrderById(orderId) {
     try {
+        // Execute the order
         const result = await executeOrder(orderId);
-        showAlert(`Order sent to TWS for execution (IB Order ID: ${result.ib_order_id})`, 'success');
-        await loadPendingOrders(); // Refresh the orders list
+        
+        // Update the order in pendingOrdersData with the IB information
+        const orderIndex = pendingOrdersData.findIndex(order => order.id == orderId);
+        if (orderIndex !== -1) {
+            // Update the order with execution details
+            pendingOrdersData[orderIndex].status = "processing";
+            pendingOrdersData[orderIndex].executed = true;
+            
+            // Add IB details from the response
+            if (result.execution_details) {
+                pendingOrdersData[orderIndex].ib_order_id = result.execution_details.ib_order_id;
+                pendingOrdersData[orderIndex].ib_status = result.execution_details.ib_status;
+                pendingOrdersData[orderIndex].filled = result.execution_details.filled;
+                pendingOrdersData[orderIndex].remaining = result.execution_details.remaining;
+                pendingOrdersData[orderIndex].avg_fill_price = result.execution_details.avg_fill_price;
+            } else {
+                // Fallback if execution_details is not present
+                pendingOrdersData[orderIndex].ib_order_id = result.ib_order_id || 'Unknown';
+                pendingOrdersData[orderIndex].ib_status = 'Submitted';
+            }
+            
+            // Update the table immediately
+            updatePendingOrdersTable();
+        }
+        
+        // Show success message
+        showAlert(`Order sent to TWS (IB Order ID: ${result.ib_order_id})`, 'success');
     } catch (error) {
         console.error('Error executing order:', error);
+        showAlert(`Error executing order: ${error.message}`, 'danger');
     }
 }
 
@@ -152,10 +200,21 @@ async function executeOrderById(orderId) {
 async function cancelOrderById(orderId) {
     try {
         await cancelOrder(orderId);
+        
+        // Update the order in pendingOrdersData
+        const orderIndex = pendingOrdersData.findIndex(order => order.id == orderId);
+        if (orderIndex !== -1) {
+            // Update the order status
+            pendingOrdersData[orderIndex].status = "cancelled";
+            
+            // Update the table immediately
+            updatePendingOrdersTable();
+        }
+        
         showAlert('Order cancelled successfully', 'success');
-        await loadPendingOrders(); // Refresh the orders list
     } catch (error) {
         console.error('Error cancelling order:', error);
+        showAlert(`Error cancelling order: ${error.message}`, 'danger');
     }
 }
 
