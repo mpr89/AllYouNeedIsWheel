@@ -240,45 +240,7 @@ class IBConnection:
             else:
                 logger.error(f"Error getting {symbol} price: {error_msg}")
             return None
-            
-    def get_multiple_stock_prices(self, tickers):
-        """
-        Get multiple stock prices in one batch request
-        
-        Args:
-            tickers (list): List of ticker symbols
-            
-        Returns:
-            dict: Dictionary of stock prices by ticker
-        """
-        if not self._ensure_connected():
-            logger.error("Not connected to TWS")
-            return {}
-        
-        result = {}
-        
-        try:
-            for ticker in tickers:
-                try:
-                    stock = Stock(ticker, 'SMART', 'USD')
-                    self.ib.qualifyContracts(stock)
-                    self.ib.reqMarketDataType(1)  # 1 = Live data
-                    ticker_data = self.ib.reqMktData(stock)
-                    # Wait for data to arrive
-                    self.ib.sleep(0.2)
-                    # Use last or close price
-                    price = ticker_data.last if ticker_data.last > 0 else ticker_data.close
-                    result[ticker] = price
-                except Exception as e:
-                        logger.error(f"Error getting real-time price for {ticker}: {str(e)}")
-            # Cancel all market data requests
-            self.ib.cancelMktData()
-            
-            return result
-        except Exception as e:
-            logger.error(f"Error getting multiple stock prices: {str(e)}")
-            return {}
-    
+  
     def get_option_chain(self, symbol, expiration=None, right='C', target_strike=None, exchange='SMART'):
         """
         Get option chain data for a stock, filtered to a specific expiration date and closest strike price
@@ -494,107 +456,7 @@ class IBConnection:
             logger.error(f"Error retrieving option chain for {symbol}: {e}")
             logger.error(traceback.format_exc())
             return None
-            
-    def get_option_price(self, contract):
-        """
-        Get the price data for an option contract
-        
-        Args:
-            contract (Contract): IB option contract
-            
-        Returns:
-            dict: Dictionary with bid, ask, and last prices
-        """
-        try:
-            # Make sure contract has the exchange set to SMART
-            if not contract.exchange or contract.exchange != 'SMART':
-                contract.exchange = 'SMART'
-            
-            # Try to qualify the contract first
-            try:
-                qualified_contracts = self.ib.qualifyContracts(contract)
-                if not qualified_contracts:
-                    logger.error(f"Could not qualify contract: {contract.symbol} {contract.lastTradeDateOrContractMonth} {contract.strike} {contract.right}")
-                    return None
-                
-                qualified_contract = qualified_contracts[0]
-            except Exception as e:
-                # If we get an ambiguous contract error, try to handle it
-                error_msg = str(e)
-                if "ambiguous" in error_msg.lower():
-                    logger.warning(f"Ambiguous contract: {contract.symbol} {contract.lastTradeDateOrContractMonth} {contract.strike} {contract.right}")
-                    
-                    # Try to create a more specific contract
-                    try:
-                        from ib_insync import Contract
-                        # Create a full contract specification with conId if possible
-                        detailed_contract = Contract(
-                            secType='OPT',
-                            symbol=contract.symbol,
-                            lastTradeDateOrContractMonth=contract.lastTradeDateOrContractMonth,
-                            strike=contract.strike,
-                            right=contract.right,
-                            multiplier='100',  # Standard for equity options
-                            exchange='SMART',
-                            currency='USD'
-                        )
-                        
-                        # Try again with the detailed contract
-                        qualified_contracts = self.ib.qualifyContracts(detailed_contract)
-                        if qualified_contracts:
-                            qualified_contract = qualified_contracts[0]
-                        else:
-                            logger.error(f"Still could not qualify contract after retry: {contract.symbol} {contract.lastTradeDateOrContractMonth} {contract.strike} {contract.right}")
-                            return None
-                    except Exception as inner_e:
-                        logger.error(f"Error handling ambiguous contract: {inner_e}")
-                        return None
-                else:
-                    logger.error(f"Error qualifying contract: {e}")
-                    return None
-            
-            # Request market data
-            ticker = self.ib.reqMktData(qualified_contract)
-            
-            # Wait for market data to arrive (up to 5 seconds)
-            max_wait = 20  # 2seconds
-            logger.debug(f"Waiting up to {max_wait} seconds for option market data...")
-            
-            for i in range(max_wait):
-                self.ib.sleep(0.1)
-                # Log data for debugging purposes
-                logger.debug(f"Option data wait ({i+1}/{max_wait}): "
-                             f"bid={ticker.bid if hasattr(ticker, 'bid') else None}, "
-                             f"ask={ticker.ask if hasattr(ticker, 'ask') else None}, "
-                             f"last={ticker.last if hasattr(ticker, 'last') else None}")
-                
-                # Check if we have received any meaningful data
-                if (hasattr(ticker, 'bid') and ticker.bid is not None and ticker.bid > 0) or \
-                   (hasattr(ticker, 'ask') and ticker.ask is not None and ticker.ask > 0) or \
-                   (hasattr(ticker, 'last') and ticker.last is not None and ticker.last > 0):
-                    break
-            
-            # Get price data
-            bid = ticker.bid if hasattr(ticker, 'bid') and ticker.bid is not None and ticker.bid > 0 else None
-            ask = ticker.ask if hasattr(ticker, 'ask') and ticker.ask is not None and ticker.ask > 0 else None
-            last = ticker.last if hasattr(ticker, 'last') and ticker.last is not None and ticker.last > 0 else None
-            
-            # Log a warning if we didn't get any price data
-            if bid is None and ask is None and last is None:
-                logger.warning(f"No price data available for {contract.symbol} {contract.right} {contract.strike} {contract.lastTradeDateOrContractMonth}")
-            
-            # Cancel market data subscription
-            self.ib.cancelMktData(qualified_contract)
-            
-            return {
-                'bid': bid,
-                'ask': ask,
-                'last': last
-            }
-        except Exception as e:
-            logger.error(f"Error getting option price: {e}")
-            return None
-   
+    
     def get_portfolio(self):
         """
         Get current portfolio positions and account information from IB
@@ -741,159 +603,205 @@ class IBConnection:
                 'is_mock': True
             }
 
-    def _generate_mock_option_data(self, symbol, expiration, right, strike):
+    def generate_mock_option_data(self, ticker, stock_price, otm_percentage, expiration):
         """
-        Generate mock option data when real and historical data are unavailable
+        Generate mock option data when real data is not available
         
         Args:
-            symbol (str): Stock symbol
-            expiration (str): Option expiration date in format YYYYMMDD
-            right (str): Option right ('C' for call, 'P' for put)
-            strike (float): Strike price
+            ticker (str): Stock ticker symbol
+            stock_price (float): Current stock price
+            otm_percentage (float): Percentage out of the money
+            for_calls (bool): Whether to generate call options
+            for_puts (bool): Whether to generate put options
+            expiration (str): Expiration date in YYYYMMDD format
             
         Returns:
             dict: Mock option data
         """
-        import random
-        from datetime import datetime
+        logger.info(f"Generating mock option data for {ticker} at price {stock_price}")
         
-        # Special case for NVDA
-        if symbol.upper() == 'NVDA':
-            # Use our fixed NVDA mock price
-            underlying = 905.75
+        # Get date information
+        today = datetime.now()
+        
+        try:
+            # Parse expiration date or use next monthly expiration if not provided
+            if expiration:
+                exp_date = datetime.strptime(expiration, '%Y%m%d')
+            else:
+                # Get next monthly expiration if none provided
+                exp_date = get_next_monthly_expiration()
+                expiration = exp_date.strftime('%Y%m%d')
             
-            # Calculate days to expiry
-            days_to_expiry = (datetime.strptime(expiration, '%Y%m%d') - datetime.now()).days
+            days_to_expiry = (exp_date - today).days
             if days_to_expiry < 0:
-                days_to_expiry = 30  # Default to 30 days if expiry is in the past
+                days_to_expiry = 30  # Default to 30 days if expiration is invalid
+                exp_date = today + timedelta(days=30)
+                expiration = exp_date.strftime('%Y%m%d')
+        except Exception as e:
+            # Default to 30 days if expiration date is invalid
+            logger.warning(f"Error parsing expiration date: {e}, using default")
+            days_to_expiry = 30
+            exp_date = today + timedelta(days=30)
+            expiration = exp_date.strftime('%Y%m%d')
             
-            # Calculate a more realistic option price based on strike and right
-            if right == 'C':
-                # For calls, intrinsic value is underlying - strike (if positive)
-                intrinsic = max(0, underlying - strike)
-                # Time value decreases as strike increases (for OTM options)
-                if strike > underlying:
-                    # Out-of-the-money call
-                    distance_factor = max(0, 1 - (strike - underlying) / (underlying * 0.2))
-                    time_value = underlying * 0.05 * distance_factor * (days_to_expiry / 30)
-                else:
-                    # In-the-money call
-                    time_value = underlying * 0.03 * (days_to_expiry / 30)
-            else:
-                # For puts, intrinsic value is strike - underlying (if positive)
-                intrinsic = max(0, strike - underlying)
-                # Time value decreases as strike decreases (for OTM options)
-                if strike < underlying:
-                    # Out-of-the-money put
-                    distance_factor = max(0, 1 - (underlying - strike) / (underlying * 0.2))
-                    time_value = underlying * 0.05 * distance_factor * (days_to_expiry / 30)
-                else:
-                    # In-the-money put
-                    time_value = underlying * 0.03 * (days_to_expiry / 30)
-            
-            option_price = max(0.05, intrinsic + time_value)
-            
-            # Calculate implied volatility (higher for further expiries and strikes near the money)
-            atm_factor = 1 - min(1, abs(strike - underlying) / (underlying * 0.2))
-            implied_vol = 0.3 + (0.2 * atm_factor) + (0.1 * (days_to_expiry / 180))
-            implied_vol = min(0.9, max(0.15, implied_vol))
-            
-            # Generate volume (higher for strikes near the money)
-            volume_base = 2000 * atm_factor
-            volume = int(max(10, volume_base * random.uniform(0.7, 1.3)))
-            
-            # Calculate Greeks
-            if right == 'C':
-                if strike == underlying:
-                    delta = 0.5
-                elif underlying > strike:  # ITM call
-                    delta = 0.5 + (0.5 * (1 - (strike / underlying)))
-                    delta = min(0.95, delta)
-                else:  # OTM call
-                    delta = 0.5 - (0.5 * (1 - (underlying / strike)))
-                    delta = max(0.05, delta)
-            else:  # Put
-                if strike == underlying:
-                    delta = -0.5
-                elif underlying > strike:  # OTM put
-                    delta = -0.5 + (0.5 * (1 - (strike / underlying)))
-                    delta = max(-0.95, delta)
-                else:  # ITM put
-                    delta = -0.5 - (0.5 * (1 - (underlying / strike)))
-                    delta = min(-0.05, delta)
-            
-            # Other Greeks based on delta
-            gamma = 0.08 * (1 - abs(delta * 2 - 1))  # Highest when ATM
-            theta = -option_price * (0.01 + 0.02 * (1 - abs(delta * 2 - 1)))  # Higher decay near ATM
-            vega = option_price * 0.1 * (1 - abs(delta * 2 - 1))  # Highest when ATM
-            
-            logger.warning(f"Using MOCK DATA for NVIDIA option {expiration} {strike} {right} - real data unavailable")
-        else:
-            # Use existing logic for other stocks
-            try:
-                stock_data = self.get_stock_data(symbol)
-                if stock_data and 'last' in stock_data:
-                    underlying = stock_data['last']
-                else:
-                    underlying = random.uniform(10, 500)
-            except:
-                underlying = random.uniform(10, 500)
-                
-            # Calculate a reasonable option price based on strike and right
-            if right == 'C':
-                intrinsic = max(0, underlying - strike)
-            else:
-                intrinsic = max(0, strike - underlying)
-                
-            # Add time value (more for longer dated options)
-            days_to_expiry = (datetime.strptime(expiration, '%Y%m%d') - datetime.now()).days
-            if days_to_expiry < 0:
-                days_to_expiry = 30
-            
-            time_value = underlying * 0.01 * (days_to_expiry / 30)
-            
-            option_price = max(0.05, intrinsic + time_value)
-            
-            # Generate random volume
-            volume = random.randint(10, 1000)
-            
-            # Generate random implied volatility
-            implied_vol = random.uniform(0.2, 0.8)
-            
-            # Calculate simple Greeks
-            if strike == underlying:
-                delta = 0.5 if right == 'C' else -0.5
-            elif (underlying > strike and right == 'C') or (underlying < strike and right == 'P'):
-                delta = 0.7 if right == 'C' else -0.7
-            else:
-                delta = 0.3 if right == 'C' else -0.3
-            
-            gamma = 0.05
-            theta = -option_price * 0.01
-            vega = option_price * 0.1
-            
-            logger.warning(f"Using MOCK DATA for option {symbol} {expiration} {strike} {right} - real data unavailable")
-            
-        return {
-            'symbol': symbol,
+        # Calculate target strikes
+        call_strike = round(stock_price * (1 + otm_percentage / 100), 2)
+        put_strike = round(stock_price * (1 - otm_percentage / 100), 2)
+        
+        # Adjust to standard strike increments
+        call_strike = self._adjust_to_standard_strike(call_strike)
+        put_strike = self._adjust_to_standard_strike(put_strike)
+        
+        result = {
+            'call': None,
+            'put': None,
+            'stock_price': stock_price,
             'expiration': expiration,
-            'strike': strike,
-            'right': right,
-            'bid': option_price * 0.95,
-            'ask': option_price * 1.05,
-            'last': option_price,
-            'volume': volume,
-            'open_interest': volume * 2,
-            'underlying': underlying,
-            'delta': delta,
-            'gamma': gamma,
-            'theta': theta,
-            'vega': vega,
-            'implied_vol': implied_vol,
-            'is_mock': True,
-            'timestamp': datetime.now().isoformat()
+            'days_to_expiry': days_to_expiry,
+            'otm_percentage': otm_percentage
         }
-
+        
+        # Calculate time value factor (more time = more extrinsic value)
+        time_factor = min(1.0, days_to_expiry / 365)
+        
+        # Calculate implied volatility based on stock price and days to expiry
+        # Higher stock prices and longer expirations typically have higher IV
+        base_iv = 0.30  # 30% base IV
+        
+        # Calculate intrinsic value for call
+        call_intrinsic = max(0, stock_price - call_strike)
+        
+        # Calculate IV with price factor for call
+        call_price_factor = 1.0 + (abs(stock_price - call_strike) / stock_price) * 0.5
+        call_iv = base_iv * call_price_factor * (1 + time_factor * 0.5)
+        
+        # Calculate extrinsic value based on IV, time, and distance from ATM
+        call_atm_factor = 1.0 - min(1.0, abs(stock_price - call_strike) / stock_price)
+        call_extrinsic = stock_price * call_iv * time_factor * call_atm_factor
+        
+        # Total option price
+        call_price = call_intrinsic + call_extrinsic
+        call_price = max(0.05, call_price)
+        
+        # Calculate delta for call
+        call_delta = 0.5
+        if stock_price > call_strike:
+            call_delta = 0.6 + (0.4 * min(1.0, (stock_price - call_strike) / call_strike))
+        else:
+            call_delta = 0.4 * min(1.0, (stock_price / call_strike))
+        
+        # Generate bid/ask spread
+        call_spread_factor = 0.05 + (0.15 * (1 - call_atm_factor))  # Wider spreads for further OTM options
+        call_bid = round(call_price * (1 - call_spread_factor), 2)
+        call_ask = round(call_price * (1 + call_spread_factor), 2)
+        call_last = round((call_bid + call_ask) / 2, 2)
+        
+        # Calculate call option earnings data
+        position_qty = 100  # Assume 100 shares per standard position
+        max_contracts = int(position_qty / 100)  # Each contract represents 100 shares
+        premium_per_contract = call_price * 100  # Premium per contract (100 shares)
+        total_premium = premium_per_contract * max_contracts
+        
+        # Ensure we don't divide by zero or NaN
+        if call_strike > 0 and max_contracts > 0:
+            return_on_capital = (total_premium / (call_strike * 100 * max_contracts)) * 100
+        else:
+            return_on_capital = 0
+        
+        # Create call option data with earnings
+        result['call'] = {
+            'symbol': f"{ticker}{expiration}C{int(call_strike)}",
+            'strike': call_strike,
+            'expiration': expiration,
+            'option_type': 'CALL',
+            'bid': call_bid,
+            'ask': call_ask,
+            'last': call_last,
+            'volume': int(random.uniform(100, 5000)),
+            'open_interest': int(random.uniform(500, 20000)),
+            'implied_volatility': round(call_iv * 100, 2),  # Convert to percentage
+            'delta': round(call_delta, 5),
+            'gamma': round(0.06 * call_atm_factor, 5),
+            'theta': round(-(call_price * 0.01) / max(1, days_to_expiry), 5),
+            'vega': round(call_price * 0.1, 5),
+            'is_mock': True,
+            # Add earnings data
+            'earnings': {
+                'max_contracts': max_contracts,
+                'premium_per_contract': round(premium_per_contract, 2),
+                'total_premium': round(total_premium, 2),
+                'return_on_capital': round(return_on_capital, 2)
+            }
+        }
+        
+        # Calculate intrinsic value for put
+        put_intrinsic = max(0, put_strike - stock_price)
+        
+        # Calculate IV with price factor for put
+        put_price_factor = 1.0 + (abs(stock_price - put_strike) / stock_price) * 0.5
+        put_iv = base_iv * put_price_factor * (1 + time_factor * 0.5)
+        
+        # Calculate extrinsic value based on IV, time, and distance from ATM
+        put_atm_factor = 1.0 - min(1.0, abs(stock_price - put_strike) / stock_price)
+        put_extrinsic = stock_price * put_iv * time_factor * put_atm_factor
+        
+        # Total option price
+        put_price = put_intrinsic + put_extrinsic
+        put_price = max(0.05, put_price)
+        
+        # Calculate delta for put
+        put_delta = -0.5
+        if stock_price < put_strike:
+            put_delta = -0.6 - (0.4 * min(1.0, (put_strike - stock_price) / put_strike))
+        else:
+            put_delta = -0.4 * min(1.0, (put_strike / stock_price))
+        
+        # Generate bid/ask spread
+        put_spread_factor = 0.05 + (0.15 * (1 - put_atm_factor))  # Wider spreads for further OTM options
+        put_bid = round(put_price * (1 - put_spread_factor), 2)
+        put_ask = round(put_price * (1 + put_spread_factor), 2)
+        put_last = round((put_bid + put_ask) / 2, 2)
+        
+        # Calculate put option earnings data
+        position_value = put_strike * 100 * int(position_qty / 100)  # Cash needed to secure puts
+        max_contracts = 1 if put_strike <= 0 else int(position_value / (put_strike * 100))
+        premium_per_contract = put_price * 100  # Premium per contract
+        total_premium = premium_per_contract * max_contracts
+        
+        # Ensure we don't divide by zero or NaN
+        if position_value > 0:
+            return_on_cash = (total_premium / position_value) * 100
+        else:
+            return_on_cash = 0
+        
+        # Create put option data with earnings
+        result['put'] = {
+            'symbol': f"{ticker}{expiration}P{int(put_strike)}",
+            'strike': put_strike,
+            'expiration': expiration,
+            'option_type': 'PUT',
+            'bid': put_bid,
+            'ask': put_ask,
+            'last': put_last,
+            'volume': int(random.uniform(100, 5000)),
+            'open_interest': int(random.uniform(500, 20000)),
+            'implied_volatility': round(put_iv * 100, 2),  # Convert to percentage
+            'delta': round(put_delta, 5),
+            'gamma': round(0.06 * put_atm_factor, 5),
+            'theta': round(-(put_price * 0.01) / max(1, days_to_expiry), 5),
+            'vega': round(put_price * 0.1, 5),
+            'is_mock': True,
+            # Add earnings data
+            'earnings': {
+                'max_contracts': max_contracts,
+                'premium_per_contract': round(premium_per_contract, 2),
+                'total_premium': round(total_premium, 2),
+                'return_on_cash': round(return_on_cash, 2)
+            }
+        }
+    
+        return result
+      
     def _generate_mock_portfolio(self):
         """
         Generate a mock portfolio with NVDA position and $1M cash
