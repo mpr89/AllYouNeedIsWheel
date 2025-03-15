@@ -110,9 +110,8 @@ function addOrdersTableEventListeners() {
     document.querySelectorAll('.execute-order').forEach(button => {
         button.addEventListener('click', async (event) => {
             const orderId = event.currentTarget.dataset.orderId;
-            if (confirm('Are you sure you want to execute this order?')) {
-                await executeOrderById(orderId);
-            }
+            // Remove confirmation dialog and execute directly
+            await executeOrderById(orderId);
         });
     });
     
@@ -120,9 +119,8 @@ function addOrdersTableEventListeners() {
     document.querySelectorAll('.cancel-order').forEach(button => {
         button.addEventListener('click', async (event) => {
             const orderId = event.currentTarget.dataset.orderId;
-            if (confirm('Are you sure you want to cancel this order?')) {
-                await cancelOrderById(orderId);
-            }
+            // Remove confirmation dialog and cancel directly
+            await cancelOrderById(orderId);
         });
     });
     
