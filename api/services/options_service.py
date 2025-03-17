@@ -500,7 +500,11 @@ class OptionsService:
             logger.info("No tickers found, using default opportunity tickers for mock data")
             tickers = ['NVDA']
                 
-        expiration = get_closest_friday().strftime('%Y%m%d')
+        # Use the standard monthly options expiration (third Friday) instead of just closest Friday
+        # This is more reliable for options that follow the standard monthly cycle
+        expiration = get_next_monthly_expiration()
+        logger.info(f"Using standard monthly options expiration date: {expiration}")
+        
         # Process each ticker
         result = {}
         
