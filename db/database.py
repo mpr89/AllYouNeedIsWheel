@@ -233,7 +233,12 @@ class OptionsDatabase:
         Returns:
             list: List of order dictionaries
         """
-        return self.get_orders(executed=executed, limit=limit)
+        if executed:
+            # Return executed orders (completed, cancelled, etc.)
+            return self.get_orders(executed=executed, limit=limit)
+        else:
+            # Return pending/processing orders specifically
+            return self.get_orders(status_filter=['pending', 'processing'], limit=limit)
     
     def update_order_status(self, order_id, status, executed=False, execution_details=None):
         """
@@ -364,15 +369,16 @@ class OptionsDatabase:
             print(f"Error getting order: {str(e)}")
             return None
             
-    def get_orders(self, status=None, executed=None, ticker=None, limit=50):
+    def get_orders(self, status=None, executed=None, ticker=None, limit=50, status_filter=None):
         """
         Get orders from the database with flexible filtering
         
         Args:
-            status (str): Filter by status (e.g., 'pending', 'completed', 'cancelled')
+            status (str): Filter by a single status (e.g., 'pending', 'completed', 'cancelled')
             executed (bool): Filter by executed flag
             ticker (str): Filter by ticker symbol
             limit (int): Maximum number of orders to return
+            status_filter (list): Filter by multiple status values
             
         Returns:
             list: List of order dictionaries
@@ -386,7 +392,12 @@ class OptionsDatabase:
             query = "SELECT * FROM orders WHERE 1=1"
             params = []
             
-            if status is not None:
+            # Handle status filtering (single status or list of statuses)
+            if status_filter is not None and isinstance(status_filter, list) and status_filter:
+                placeholders = ', '.join(['?' for _ in status_filter])
+                query += f" AND status IN ({placeholders})"
+                params.extend(status_filter)
+            elif status is not None:
                 query += " AND status = ?"
                 params.append(status)
                 

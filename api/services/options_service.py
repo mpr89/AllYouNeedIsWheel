@@ -843,10 +843,19 @@ class OptionsService:
         try:
             # Get all pending and processing orders from database
             db = self.db
-            orders = db.get_orders(
-                status_filter=['pending', 'processing'],
-                limit=50  # Limit to most recent orders
-            )
+            try:
+                orders = db.get_orders(
+                    status_filter=['pending', 'processing'],
+                    limit=50  # Limit to most recent orders
+                )
+                logger.info(f"Found {len(orders)} pending/processing orders to check")
+            except Exception as db_error:
+                logger.error(f"Error retrieving orders from database: {str(db_error)}")
+                logger.error(traceback.format_exc())
+                return {
+                    "success": False,
+                    "error": f"Database error: {str(db_error)}"
+                }
             
             if not orders or len(orders) == 0:
                 logger.info("No pending or processing orders found")
