@@ -454,19 +454,32 @@ class OptionsService:
             execution_details = {
                 "ib_order_id": result.get('order_id'),
                 "ib_status": result.get('status'),
-                "filled": result.get('filled'),
-                "remaining": result.get('remaining'),
-                "avg_fill_price": result.get('avg_fill_price'),
-                "is_mock": result.get('is_mock', False)
+                "filled": result.get('filled', 0),
+                "remaining": result.get('remaining', 0),
+                "avg_fill_price": result.get('avg_fill_price', 0),
+                "is_mock": result.get('is_mock', False),
+                "last_updated": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             }
             
+            logger.info(f"Updating order {order_id} status to 'processing' with execution details: {execution_details}")
+            
             # Update order status to 'processing'
-            db.update_order_status(
+            update_result = db.update_order_status(
                 order_id=order_id,
                 status="processing",
                 executed=True,  # Mark as executed since it's been sent to IBKR
                 execution_details=execution_details
             )
+            
+            if not update_result:
+                logger.warning(f"Failed to update order {order_id} in database. Will continue anyway.")
+            
+            # Double-check that the order was updated by retrieving it
+            updated_order = db.get_order(order_id)
+            if updated_order:
+                logger.info(f"Order {order_id} after update: {updated_order}")
+            else:
+                logger.warning(f"Could not retrieve updated order {order_id}")
             
             logger.info(f"Order with ID {order_id} sent to TWS, IB order ID: {result.get('order_id')}")
             return {
@@ -851,6 +864,8 @@ class OptionsService:
                     "message": "No pending or processing orders to check",
                     "updated_orders": []
                 }
+            
+            logger.info(f"Found {len(orders)} pending/processing orders to check")
                 
             # Connect to TWS
             suppress_ib_logs()
@@ -867,11 +882,14 @@ class OptionsService:
                 order_id = order.get('id')
                 ib_order_id = order.get('ib_order_id')
                 
+                logger.info(f"Checking order {order_id}, current status: {order.get('status')}, IBKR ID: {ib_order_id}")
+                
                 # Only check orders that have been submitted to IB
                 if order.get('status') == 'processing' and ib_order_id:
                     try:
                         # Check status in TWS
                         ib_status = conn.check_order_status(ib_order_id)
+                        logger.info(f"IBKR status for order {order_id}: {ib_status}")
                         
                         if ib_status:
                             # Determine new status based on IB status
@@ -886,6 +904,8 @@ class OptionsService:
                                 else:
                                     new_status = "canceled"
                                     executed = True  # Mark as executed if cancelled
+                            
+                            logger.info(f"Mapped IBKR status to new status: {new_status}, executed={executed}")
                                     
                             # Update execution details
                             execution_details = {
@@ -899,12 +919,17 @@ class OptionsService:
                             }
                             
                             # Update database with new status
-                            db.update_order_status(
+                            update_result = db.update_order_status(
                                 order_id=order_id,
                                 status=new_status,
                                 executed=executed,  # Set executed flag based on status
                                 execution_details=execution_details
                             )
+                            
+                            if not update_result:
+                                logger.warning(f"Failed to update order {order_id} status in database")
+                            else:
+                                logger.info(f"Successfully updated order {order_id} status to {new_status}")
                             
                             # Add to list of updated orders
                             updated_order = order.copy()
@@ -1012,13 +1037,27 @@ class OptionsService:
                             "last_updated": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                         }
                         
+                        logger.info(f"Updating order {order_id} status to 'canceled' with execution details: {execution_details}")
+                        
                         # Update order status in database
-                        db.update_order_status(
+                        update_result = db.update_order_status(
                             order_id=order_id,
                             status="canceled",
                             executed=True,  # Mark as executed since it's been fully processed
                             execution_details=execution_details
                         )
+                        
+                        if not update_result:
+                            logger.warning(f"Failed to update order {order_id} status in database")
+                        else:
+                            logger.info(f"Successfully updated order {order_id} status to 'canceled'")
+                            
+                        # Double-check that the order was updated by retrieving it
+                        updated_order = db.get_order(order_id)
+                        if updated_order:
+                            logger.info(f"Order {order_id} after update: {updated_order}")
+                        else:
+                            logger.warning(f"Could not retrieve updated order {order_id}")
                         
                         return {
                             "success": True,
@@ -1034,13 +1073,27 @@ class OptionsService:
                             "last_updated": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                         }
                         
+                        logger.info(f"Updating order {order_id} status to 'canceling' with execution details: {execution_details}")
+                        
                         # Update order status in database to indicate cancellation pending
-                        db.update_order_status(
+                        update_result = db.update_order_status(
                             order_id=order_id,
                             status="canceling",
                             executed=False,  # Not fully executed yet, still processing
                             execution_details=execution_details
                         )
+                        
+                        if not update_result:
+                            logger.warning(f"Failed to update order {order_id} status in database")
+                        else:
+                            logger.info(f"Successfully updated order {order_id} status to 'canceling'")
+                            
+                        # Double-check that the order was updated by retrieving it
+                        updated_order = db.get_order(order_id)
+                        if updated_order:
+                            logger.info(f"Order {order_id} after update: {updated_order}")
+                        else:
+                            logger.warning(f"Could not retrieve updated order {order_id}")
                         
                         return {
                             "success": True,
@@ -1059,12 +1112,25 @@ class OptionsService:
                     }, 500
             
             # For pending orders or if we couldn't connect to TWS, just update the database
-            db.update_order_status(
+            logger.info(f"Canceling pending order {order_id} in database")
+            update_result = db.update_order_status(
                 order_id=order_id,
                 status="canceled",
                 executed=True,  # Mark as executed since it's been fully processed
                 execution_details={"last_updated": datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
             )
+            
+            if not update_result:
+                logger.warning(f"Failed to update order {order_id} status in database")
+            else:
+                logger.info(f"Successfully updated order {order_id} status to 'canceled'")
+                
+            # Double-check that the order was updated by retrieving it
+            updated_order = db.get_order(order_id)
+            if updated_order:
+                logger.info(f"Order {order_id} after update: {updated_order}")
+            else:
+                logger.warning(f"Could not retrieve updated order {order_id}")
             
             logger.info(f"Order with ID {order_id} marked as canceled in database")
             return {

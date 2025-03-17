@@ -252,17 +252,19 @@ class OptionsDatabase:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
+            print(f"Updating order {order_id} to status '{status}', executed={executed}")
+            if execution_details:
+                print(f"With execution details: {execution_details}")
+            
             # Start with basic update query
-            update_query = '''
-                UPDATE orders
-                SET status = ?, executed = ?
-                WHERE id = ?
-            '''
+            update_query = 'UPDATE orders SET status = ?, executed = ? WHERE id = ?'
             params = [status, executed, order_id]
             
             # If we have execution details, update those fields too
             if execution_details and isinstance(execution_details, dict):
-                set_clauses = []
+                # Start with the basic fields
+                set_clauses = ["status = ?", "executed = ?"]
+                params = [status, executed]
                 
                 # Map execution details to database fields
                 field_mappings = {
@@ -271,7 +273,9 @@ class OptionsDatabase:
                     'filled': 'filled',
                     'remaining': 'remaining',
                     'avg_fill_price': 'avg_fill_price',
-                    'is_mock': 'is_mock'
+                    'is_mock': 'is_mock',
+                    'commission': 'commission',
+                    'last_updated': 'last_updated'
                 }
                 
                 # Check for each field in the mapping
@@ -280,23 +284,37 @@ class OptionsDatabase:
                         set_clauses.append(f"{db_field} = ?")
                         params.append(execution_details[api_field])
                 
-                # If we have additional fields to set, add them to the query
-                if set_clauses:
-                    # Reconstruct the query with the additional fields
-                    update_query = '''
-                        UPDATE orders
-                        SET status = ?, executed = ?, {}
-                        WHERE id = ?
-                    '''.format(', '.join(set_clauses))
+                # Construct the full query
+                update_query = f"UPDATE orders SET {', '.join(set_clauses)} WHERE id = ?"
+                params.append(order_id)  # Add the ID as the last parameter
+                
+                print(f"Update query: {update_query}")
+                print(f"Update params: {params}")
             
             # Execute the query
             cursor.execute(update_query, params)
+            rows_affected = cursor.rowcount
+            print(f"Rows affected by update: {rows_affected}")
+            
+            # If no rows were affected, check if the order exists
+            if rows_affected == 0:
+                # Query to see if the order exists
+                cursor.execute("SELECT COUNT(*) FROM orders WHERE id = ?", (order_id,))
+                count = cursor.fetchone()[0]
+                if count == 0:
+                    print(f"Order with ID {order_id} not found in database")
+                else:
+                    print(f"Order with ID {order_id} exists but no update was made - possibly no change in values")
+            
             conn.commit()
             conn.close()
             
-            return True
+            # Return True only if rows were affected
+            return rows_affected > 0
         except Exception as e:
             print(f"Error updating order status: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
             return False
             
     def delete_order(self, order_id):
@@ -345,23 +363,27 @@ class OptionsDatabase:
             conn.row_factory = sqlite3.Row  # This enables column access by name
             cursor = conn.cursor()
             
-            cursor.execute('''
-                SELECT * FROM orders
-                WHERE id = ?
-            ''', (order_id,))
+            query = "SELECT * FROM orders WHERE id = ?"
+            print(f"Executing query for order {order_id}: {query}")
+            
+            cursor.execute(query, (order_id,))
             
             row = cursor.fetchone()
             conn.close()
             
             if not row:
+                print(f"No order found with ID {order_id}")
                 return None
                 
             # Convert row to dictionary
             order = dict(row)
+            print(f"Retrieved order {order_id}: {order}")
             return order
             
         except Exception as e:
             print(f"Error getting order: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
             return None
             
     def get_orders(self, status=None, executed=None, ticker=None, limit=50):
