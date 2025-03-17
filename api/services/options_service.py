@@ -10,7 +10,7 @@ import time
 from datetime import datetime, timedelta
 import pandas as pd
 from core.connection import IBConnection, Option, Stock, suppress_ib_logs
-from core.utils import get_closest_friday, get_next_friday, get_strikes_around_price
+from core.utils import get_closest_friday, get_next_monthly_expiration, get_strikes_around_price
 from config import Config
 from db.database import OptionsDatabase
 import traceback
@@ -100,7 +100,7 @@ class OptionsService:
                 exp_date = datetime.strptime(expiration, '%Y%m%d')
             else:
                 # Get next monthly expiration if none provided
-                exp_date = get_next_friday()
+                exp_date = get_next_monthly_expiration()
                 expiration = exp_date.strftime('%Y%m%d')
             
             days_to_expiry = (exp_date - today).days
@@ -464,6 +464,7 @@ class OptionsService:
             db.update_order_status(
                 order_id=order_id,
                 status="processing",
+                executed=True,  # Mark as executed since it's been sent to IBKR
                 execution_details=execution_details
             )
             
@@ -500,7 +501,7 @@ class OptionsService:
             logger.info("No tickers found, using default opportunity tickers for mock data")
             tickers = ['NVDA']
                 
-        expiration = get_next_friday().strftime('%Y%m%d')
+        expiration = get_closest_friday().strftime('%Y%m%d')
         # Process each ticker
         result = {}
         
@@ -875,13 +876,16 @@ class OptionsService:
                         if ib_status:
                             # Determine new status based on IB status
                             new_status = "processing"  # Default if still being processed
+                            executed = False  # Default not executed
                             
                             # Map IB status to our status
                             if ib_status.get('status') in ['Filled', 'ApiCancelled', 'Cancelled']:
                                 if ib_status.get('status') == 'Filled':
                                     new_status = "executed"
+                                    executed = True  # Mark as executed if filled
                                 else:
                                     new_status = "canceled"
+                                    executed = True  # Mark as executed if cancelled
                                     
                             # Update execution details
                             execution_details = {
@@ -898,6 +902,7 @@ class OptionsService:
                             db.update_order_status(
                                 order_id=order_id,
                                 status=new_status,
+                                executed=executed,  # Set executed flag based on status
                                 execution_details=execution_details
                             )
                             
@@ -1011,6 +1016,7 @@ class OptionsService:
                         db.update_order_status(
                             order_id=order_id,
                             status="canceled",
+                            executed=True,  # Mark as executed since it's been fully processed
                             execution_details=execution_details
                         )
                         
@@ -1032,6 +1038,7 @@ class OptionsService:
                         db.update_order_status(
                             order_id=order_id,
                             status="canceling",
+                            executed=False,  # Not fully executed yet, still processing
                             execution_details=execution_details
                         )
                         
@@ -1055,6 +1062,7 @@ class OptionsService:
             db.update_order_status(
                 order_id=order_id,
                 status="canceled",
+                executed=True,  # Mark as executed since it's been fully processed
                 execution_details={"last_updated": datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
             )
             
