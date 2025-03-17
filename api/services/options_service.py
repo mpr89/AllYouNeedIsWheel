@@ -190,11 +190,11 @@ class OptionsService:
             'last': call_last,
             'volume': int(random.uniform(100, 5000)),
             'open_interest': int(random.uniform(500, 20000)),
-            'implied_volatility': round(call_iv * 100, 2),  # Convert to percentage
-            'delta': round(call_delta, 5),
-            'gamma': round(0.06 * call_atm_factor, 5),
-            'theta': round(-(call_price * 0.01) / max(1, days_to_expiry), 5),
-            'vega': round(call_price * 0.1, 5),
+            'implied_volatility': round(call_iv * 100, 2) if call_iv is not None else 0,  # Convert to percentage
+            'delta': round(call_delta, 5) if call_delta is not None else 0,
+            'gamma': round(0.06 * call_atm_factor, 5) if call_atm_factor is not None else 0,
+            'theta': round(-(call_price * 0.01) / max(1, days_to_expiry), 5) if call_price is not None and days_to_expiry is not None else 0,
+            'vega': round(call_price * 0.1, 5) if call_price is not None else 0,
             'is_mock': True,
             # Add flattened earnings data 
             'earnings_max_contracts': max_contracts,
@@ -254,11 +254,11 @@ class OptionsService:
             'last': put_last,
             'volume': int(random.uniform(100, 5000)),
             'open_interest': int(random.uniform(500, 20000)),
-            'implied_volatility': round(put_iv * 100, 2),  # Convert to percentage
-            'delta': round(put_delta, 5),
-            'gamma': round(0.06 * put_atm_factor, 5),
-            'theta': round(-(put_price * 0.01) / max(1, days_to_expiry), 5),
-            'vega': round(put_price * 0.1, 5),
+            'implied_volatility': round(put_iv * 100, 2) if put_iv is not None else 0,  # Convert to percentage
+            'delta': round(put_delta, 5) if put_delta is not None else 0,
+            'gamma': round(0.06 * put_atm_factor, 5) if put_atm_factor is not None else 0,
+            'theta': round(-(put_price * 0.01) / max(1, days_to_expiry), 5) if put_price is not None and days_to_expiry is not None else 0,
+            'vega': round(put_price * 0.1, 5) if put_price is not None else 0,
             'is_mock': True,
             # Add flattened earnings data
             'earnings_max_contracts': max_contracts,
@@ -460,11 +460,10 @@ class OptionsService:
                 "is_mock": result.get('is_mock', False)
             }
             
-            # Update order status to 'processing' and mark as executed
+            # Update order status to 'processing'
             db.update_order_status(
                 order_id=order_id,
                 status="processing",
-                executed=True,  # Mark order as executed
                 execution_details=execution_details
             )
             
@@ -726,11 +725,11 @@ class OptionsService:
                             'ask': ask,
                             'last': last,
                             'open_interest': int(open_interest),
-                            'implied_volatility': round(iv * 100, 2) if iv < 1 and iv > 0 else round(iv, 2),  # Handle percentage vs decimal
-                            'delta': round(delta, 5),
-                            'gamma': round(gamma, 5),
-                            'theta': round(theta, 5),
-                            'vega': round(vega, 5),
+                            'implied_volatility': round(iv * 100, 2) if iv is not None and iv < 1 and iv > 0 else (0 if iv is None else round(iv, 2)),  # Handle percentage vs decimal
+                            'delta': round(delta, 5) if delta is not None else 0,
+                            'gamma': round(gamma, 5) if gamma is not None else 0,
+                            'theta': round(theta, 5) if theta is not None else 0,
+                            'vega': round(vega, 5) if vega is not None else 0,
                             'is_mock': False
                         }
                         
