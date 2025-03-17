@@ -10,7 +10,7 @@ import time
 from datetime import datetime, timedelta
 import pandas as pd
 from core.connection import IBConnection, Option, Stock, suppress_ib_logs
-from core.utils import get_closest_friday, get_next_monthly_expiration, get_strikes_around_price
+from core.utils import get_next_friday, get_next_monthly_expiration, get_strikes_around_price
 from config import Config
 from db.database import OptionsDatabase
 import traceback
@@ -500,11 +500,7 @@ class OptionsService:
             logger.info("No tickers found, using default opportunity tickers for mock data")
             tickers = ['NVDA']
                 
-        # Use the standard monthly options expiration (third Friday) instead of just closest Friday
-        # This is more reliable for options that follow the standard monthly cycle
-        expiration = get_next_monthly_expiration()
-        logger.info(f"Using standard monthly options expiration date: {expiration}")
-        
+        expiration = get_next_friday().strftime('%Y%m%d')
         # Process each ticker
         result = {}
         

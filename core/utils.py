@@ -121,28 +121,27 @@ def setup_logging(logs_dir='logs', log_prefix='trader', log_level=logging.DEBUG)
     # Return a logger for the calling module
     return logging.getLogger('autotrader')
 
-def get_closest_friday():
+def get_next_friday():
     """
-    Get the closest Friday from today
+    Get the next Friday from today, always returns a future date
+    (never returns today even if today is Friday)
     
     Returns:
-        datetime.date: Date of the closest Friday
+        datetime.date: Date of the next Friday
     """
     today = datetime.now().date()
     
     # Get the day of the week (0 is Monday, 4 is Friday)
     weekday = today.weekday()
     
-    # Calculate days until Friday
+    # Calculate days until next Friday
     if weekday < 4:  # Monday to Thursday
         days_to_add = 4 - weekday
-    elif weekday == 4:  # Friday
-        days_to_add = 0
-    else:  # Weekend
-        days_to_add = 4 + (7 - weekday)  # Next Friday
+    else:  # Friday to Sunday
+        days_to_add = 4 + (7 - weekday) % 7  # Next Friday, ensuring we don't return today
     
-    closest_friday = today + timedelta(days=days_to_add)
-    return closest_friday
+    next_friday = today + timedelta(days=days_to_add)
+    return next_friday
 
 def get_next_monthly_expiration():
     """

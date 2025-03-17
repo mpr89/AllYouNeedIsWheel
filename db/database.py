@@ -249,18 +249,21 @@ class OptionsDatabase:
             bool: True if successful, False otherwise
         """
         try:
-            print(f"Updating order {order_id} status to {status}, executed={executed}")
-            print(f"Execution details: {execution_details}")
-            
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            # Start with basic params and fields to update
-            fields_to_update = ["status = ?", "executed = ?"]
-            params = [status, executed]
+            # Start with basic update query
+            update_query = '''
+                UPDATE orders
+                SET status = ?, executed = ?
+                WHERE id = ?
+            '''
+            params = [status, executed, order_id]
             
-            # If we have execution details, add them to the fields and params
+            # If we have execution details, update those fields too
             if execution_details and isinstance(execution_details, dict):
+                set_clauses = []
+                
                 # Map execution details to database fields
                 field_mappings = {
                     'ib_order_id': 'ib_order_id',
@@ -271,41 +274,29 @@ class OptionsDatabase:
                     'is_mock': 'is_mock'
                 }
                 
-                # Add each field that exists in execution_details
+                # Check for each field in the mapping
                 for api_field, db_field in field_mappings.items():
                     if api_field in execution_details:
-                        fields_to_update.append(f"{db_field} = ?")
+                        set_clauses.append(f"{db_field} = ?")
                         params.append(execution_details[api_field])
-                        print(f"Adding {api_field}={execution_details[api_field]} to update")
-            
-            # Construct the full update query
-            update_query = f'''
-                UPDATE orders
-                SET {', '.join(fields_to_update)}
-                WHERE id = ?
-            '''
-            
-            # Add the order_id as the last parameter for the WHERE clause
-            params.append(order_id)
-            
-            print(f"Final update query: {update_query}")
-            print(f"Final parameters: {params}")
+                
+                # If we have additional fields to set, add them to the query
+                if set_clauses:
+                    # Reconstruct the query with the additional fields
+                    update_query = '''
+                        UPDATE orders
+                        SET status = ?, executed = ?, {}
+                        WHERE id = ?
+                    '''.format(', '.join(set_clauses))
             
             # Execute the query
             cursor.execute(update_query, params)
-            print(f"Rows affected: {cursor.rowcount}")
             conn.commit()
             conn.close()
-            
-            # Verify the update by retrieving the order
-            order = self.get_order(order_id)
-            print(f"After update, order: {order}")
             
             return True
         except Exception as e:
             print(f"Error updating order status: {str(e)}")
-            import traceback
-            print(traceback.format_exc())
             return False
             
     def delete_order(self, order_id):

@@ -82,8 +82,8 @@ function updatePendingOrdersTable() {
             <small class="text-muted">${createdAt}</small>
         `;
         
-        // Add IB info if it's available (regardless of status)
-        if (order.ib_order_id && order.ib_order_id !== 'Not sent' && order.ib_order_id !== 'null') {
+        // Add IB info if order has been executed
+        if (order.status !== 'pending') {
             statusHtml += `
                 <br>
                 <small class="text-muted mt-1">
@@ -223,37 +223,9 @@ async function cancelOrderById(orderId) {
  */
 async function loadPendingOrders() {
     try {
-        console.log("Loading pending orders from API");
         const data = await fetchPendingOrders();
-        
         if (data && data.orders) {
-            console.log("Received orders:", data.orders);
-            
-            // Check if we need to preserve IB details for in-progress orders
-            const updatedOrders = data.orders.map(newOrder => {
-                // Find existing order with the same ID
-                const existingOrder = pendingOrdersData.find(order => order.id === newOrder.id);
-                
-                // If there's an existing order and it has IB information that the new one doesn't,
-                // preserve that information
-                if (existingOrder && 
-                    existingOrder.ib_order_id && 
-                    (!newOrder.ib_order_id || newOrder.ib_order_id === 'null')) {
-                    console.log(`Preserving IB details for order ${newOrder.id}`);
-                    return {
-                        ...newOrder,
-                        ib_order_id: existingOrder.ib_order_id,
-                        ib_status: existingOrder.ib_status,
-                        filled: existingOrder.filled,
-                        remaining: existingOrder.remaining,
-                        avg_fill_price: existingOrder.avg_fill_price
-                    };
-                }
-                
-                return newOrder;
-            });
-            
-            pendingOrdersData = updatedOrders;
+            pendingOrdersData = data.orders;
             updatePendingOrdersTable();
         }
     } catch (error) {
