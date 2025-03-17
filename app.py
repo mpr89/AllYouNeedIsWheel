@@ -27,6 +27,7 @@ def create_application():
     
     # Load connection configuration
     connection_config_path = os.environ.get('CONNECTION_CONFIG', 'connection.json')
+    logger.info(f"Loading connection configuration from: {connection_config_path}")
     connection_config = {}
     
     if os.path.exists(connection_config_path):

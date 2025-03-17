@@ -20,9 +20,18 @@ class Config:
         # Initialize with default values
         self.config = default_config.copy() if default_config else {}
         
+        # If config_file is not provided, check environment variable
+        if config_file is None:
+            env_config_file = os.environ.get('CONNECTION_CONFIG', 'connection.json')
+            if os.path.exists(env_config_file):
+                config_file = env_config_file
+                logger.info(f"Using connection config from environment: {env_config_file}")
+        
         # Load from file if provided
         if config_file and os.path.exists(config_file):
             self.load_from_file(config_file)
+            logger.info(f"Configuration loaded from: {config_file}")
+            logger.debug(f"Connection port: {self.get('port')}")
             
     def load_from_file(self, config_file):
         """

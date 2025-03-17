@@ -26,6 +26,7 @@ class OptionsService:
     """
     def __init__(self):
         self.config = Config()
+        logger.info(f"Options service using port: {self.config.get('port')}")
         self.connection = None
         self.db = OptionsDatabase()
         self.portfolio_service = None  # Will be initialized when needed
@@ -55,9 +56,12 @@ class OptionsService:
             unique_client_id = int(time.time() % 10000) + random.randint(1000, 9999)
             logger.info(f"Creating new TWS connection with client ID: {unique_client_id}")
             
+            port = self.config.get('port', 7497)
+            logger.info(f"Connecting to TWS on port: {port}")
+            
             self.connection = IBConnection(
                 host=self.config.get('host', '127.0.0.1'),
-                port=self.config.get('port', 7497),
+                port=port,
                 client_id=unique_client_id,  # Use the unique client ID instead of fixed ID 1
                 timeout=self.config.get('timeout', 20),
                 readonly=self.config.get('readonly', True)

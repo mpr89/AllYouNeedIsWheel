@@ -18,6 +18,7 @@ class PortfolioService:
     """
     def __init__(self):
         self.config = Config()
+        logger.info(f"Portfolio service using port: {self.config.get('port')}")
         self.connection = None
         
     def _ensure_connection(self):
@@ -32,9 +33,12 @@ class PortfolioService:
                 logger.info(f"Creating new TWS connection with client ID: {unique_client_id}")
                 
                 # Create new connection
+                port = self.config.get('port', 7497)
+                logger.info(f"Connecting to TWS on port: {port}")
+                
                 self.connection = IBConnection(
                     host=self.config.get('host', '127.0.0.1'),
-                    port=self.config.get('port', 7497),
+                    port=port,
                     client_id=unique_client_id,  # Use the unique client ID instead of fixed ID 1
                     timeout=self.config.get('timeout', 20),
                     readonly=self.config.get('readonly', True)
