@@ -92,9 +92,30 @@ class OptionsDatabase:
                 ib_status TEXT,
                 filled INTEGER DEFAULT 0,
                 remaining INTEGER DEFAULT 0,
-                avg_fill_price REAL DEFAULT 0
+                avg_fill_price REAL DEFAULT 0,
+                commission REAL DEFAULT 0,
+                last_updated TEXT
             )
         ''')
+        
+        # Check if the last_updated column exists and add it if not
+        try:
+            # Try to get info about the orders table columns
+            cursor.execute("PRAGMA table_info(orders)")
+            columns = cursor.fetchall()
+            column_names = [column[1] for column in columns]
+            
+            # Check if last_updated is missing and add it
+            if 'last_updated' not in column_names:
+                print("Adding missing 'last_updated' column to orders table")
+                cursor.execute("ALTER TABLE orders ADD COLUMN last_updated TEXT")
+            
+            # Check if commission is missing and add it
+            if 'commission' not in column_names:
+                print("Adding missing 'commission' column to orders table")
+                cursor.execute("ALTER TABLE orders ADD COLUMN commission REAL DEFAULT 0")
+        except Exception as e:
+            print(f"Error checking or adding columns: {e}")
         
         conn.commit()
         conn.close()
