@@ -143,8 +143,9 @@ async function saveOptionOrder(orderData) {
  */
 async function cancelOrder(orderId) {
     try {
-        const response = await fetch(`/api/options/order/${orderId}`, {
-            method: 'DELETE',
+        // Use the new cancellation endpoint for active orders
+        const response = await fetch(`/api/options/cancel/${orderId}`, {
+            method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             }
@@ -159,6 +160,32 @@ async function cancelOrder(orderId) {
     } catch (error) {
         console.error('Error cancelling order:', error);
         showAlert(`Error cancelling order: ${error.message}`, 'danger');
+        throw error;
+    }
+}
+
+/**
+ * Check status of pending/processing orders with TWS
+ * @returns {Promise} Promise with updated orders
+ */
+async function checkOrderStatus() {
+    try {
+        const response = await fetch('/api/options/check-orders', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.error || 'Failed to check order status');
+        }
+        
+        return await response.json();
+    } catch (error) {
+        console.error('Error checking order status:', error);
+        // Don't show alert for this regular background operation
         throw error;
     }
 }
@@ -199,5 +226,6 @@ export {
     fetchPendingOrders,
     saveOptionOrder,
     cancelOrder,
-    executeOrder
+    executeOrder,
+    checkOrderStatus
 }; 

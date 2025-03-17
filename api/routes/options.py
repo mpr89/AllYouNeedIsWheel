@@ -154,4 +154,51 @@ def execute_order(order_id):
         logger.error(f"Error executing order: {str(e)}")
         logger.error(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
+
+@bp.route('/check-orders', methods=['POST'])
+def check_orders():
+    """
+    Check status of pending/processing orders with TWS API and update them in the database.
+    
+    Returns:
+        JSON response with updated orders
+    """
+    logger.info("POST /check-orders request received")
+    
+    try:
+        # Use the options service to check and update order statuses
+        response = options_service.check_pending_orders()
+        
+        # Return the response from the service
+        return jsonify(response), 200
+            
+    except Exception as e:
+        logger.error(f"Error checking orders: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+@bp.route('/cancel/<int:order_id>', methods=['POST'])
+def cancel_order(order_id):
+    """
+    Cancel an order, including those being processed by IBKR.
+    
+    Args:
+        order_id (int): ID of the order to cancel
+        
+    Returns:
+        JSON response with cancellation details
+    """
+    logger.info(f"POST /cancel/{order_id} request received")
+    
+    try:
+        # Use the options service to cancel the order
+        response, status_code = options_service.cancel_order(order_id)
+        
+        # Return the response from the service
+        return jsonify(response), status_code
+            
+    except Exception as e:
+        logger.error(f"Error canceling order: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
        

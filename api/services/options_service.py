@@ -10,7 +10,7 @@ import time
 from datetime import datetime, timedelta
 import pandas as pd
 from core.connection import IBConnection, Option, Stock, suppress_ib_logs
-from core.utils import get_next_friday, get_next_monthly_expiration, get_strikes_around_price
+from core.utils import get_closest_friday, get_next_monthly_expiration, get_strikes_around_price
 from config import Config
 from db.database import OptionsDatabase
 import traceback
@@ -500,7 +500,7 @@ class OptionsService:
             logger.info("No tickers found, using default opportunity tickers for mock data")
             tickers = ['NVDA']
                 
-        expiration = get_next_friday().strftime('%Y%m%d')
+        expiration = get_closest_friday().strftime('%Y%m%d')
         # Process each ticker
         result = {}
         
@@ -823,4 +823,252 @@ class OptionsService:
                             sanitize_dict(item)
         
         # Sanitize the entire result dictionary
-        sanitize_dict(result) 
+        sanitize_dict(result)
+        
+    def check_pending_orders(self):
+        """
+        Check status of pending/processing orders and update them in the database
+        by querying the TWS API for current status.
+        
+        Returns:
+            dict: Result with updated orders
+        """
+        logger.info("Checking pending orders with TWS")
+        
+        try:
+            # Get all pending and processing orders from database
+            db = self.db
+            orders = db.get_orders(
+                status_filter=['pending', 'processing'],
+                limit=50  # Limit to most recent orders
+            )
+            
+            if not orders or len(orders) == 0:
+                logger.info("No pending or processing orders found")
+                return {
+                    "success": True,
+                    "message": "No pending or processing orders to check",
+                    "updated_orders": []
+                }
+                
+            # Connect to TWS
+            suppress_ib_logs()
+            conn = self._ensure_connection()
+            if not conn:
+                logger.error("Failed to connect to TWS for order status checking")
+                return {
+                    "success": False,
+                    "error": "Failed to connect to TWS"
+                }
+                
+            updated_orders = []
+            for order in orders:
+                order_id = order.get('id')
+                ib_order_id = order.get('ib_order_id')
+                
+                # Only check orders that have been submitted to IB
+                if order.get('status') == 'processing' and ib_order_id:
+                    try:
+                        # Check status in TWS
+                        ib_status = conn.check_order_status(ib_order_id)
+                        
+                        if ib_status:
+                            # Determine new status based on IB status
+                            new_status = "processing"  # Default if still being processed
+                            
+                            # Map IB status to our status
+                            if ib_status.get('status') in ['Filled', 'ApiCancelled', 'Cancelled']:
+                                if ib_status.get('status') == 'Filled':
+                                    new_status = "executed"
+                                else:
+                                    new_status = "canceled"
+                                    
+                            # Update execution details
+                            execution_details = {
+                                "ib_order_id": ib_order_id,
+                                "ib_status": ib_status.get('status'),
+                                "filled": ib_status.get('filled', 0),
+                                "remaining": ib_status.get('remaining', 0),
+                                "avg_fill_price": ib_status.get('avg_fill_price', 0),
+                                "commission": ib_status.get('commission', 0),
+                                "last_updated": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                            }
+                            
+                            # Update database with new status
+                            db.update_order_status(
+                                order_id=order_id,
+                                status=new_status,
+                                execution_details=execution_details
+                            )
+                            
+                            # Add to list of updated orders
+                            updated_order = order.copy()
+                            updated_order['status'] = new_status
+                            updated_order.update(execution_details)
+                            updated_orders.append(updated_order)
+                            
+                            logger.info(f"Updated order {order_id} status to {new_status}, IB status: {ib_status.get('status')}")
+                    except Exception as e:
+                        logger.error(f"Error checking status for order {order_id}: {str(e)}")
+                        logger.error(traceback.format_exc())
+            
+            # Disconnect from TWS
+            if conn:
+                conn.disconnect()
+                
+            return {
+                "success": True,
+                "message": f"Updated {len(updated_orders)} orders",
+                "updated_orders": updated_orders
+            }
+                
+        except Exception as e:
+            logger.error(f"Error checking pending orders: {str(e)}")
+            logger.error(traceback.format_exc())
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+    def cancel_order(self, order_id):
+        """
+        Cancel an order, supporting both pending and processing orders.
+        If the order is processing on IBKR, it will attempt to cancel it via TWS API.
+        
+        Args:
+            order_id (int): The ID of the order to cancel
+            
+        Returns:
+            dict: Result with status and details
+        """
+        logger.info(f"Canceling order with ID {order_id}")
+        
+        try:
+            # Get the order to check its current status
+            db = self.db
+            order = db.get_order(order_id)
+            
+            if not order:
+                logger.error(f"Order with ID {order_id} not found")
+                return {
+                    "success": False,
+                    "error": f"Order with ID {order_id} not found"
+                }, 404
+                
+            # Check if order is in a cancelable state
+            if order['status'] not in ['pending', 'processing']:
+                logger.error(f"Cannot cancel order with status '{order['status']}'")
+                return {
+                    "success": False,
+                    "error": f"Cannot cancel order with status '{order['status']}'. Only 'pending' or 'processing' orders can be canceled."
+                }, 400
+                
+            # If the order is processing in IBKR, we need to cancel it there first
+            if order['status'] == 'processing' and order.get('ib_order_id'):
+                # Connect to TWS
+                suppress_ib_logs()
+                conn = self._ensure_connection()
+                
+                if not conn:
+                    logger.error("Failed to connect to TWS")
+                    return {
+                        "success": False,
+                        "error": "Failed to connect to TWS"
+                    }, 500
+                    
+                try:
+                    # Call TWS API to cancel the order
+                    ib_order_id = order.get('ib_order_id')
+                    cancel_result = conn.cancel_order(ib_order_id)
+                    
+                    if not cancel_result.get('success', False):
+                        logger.error(f"Failed to cancel order in TWS: {cancel_result.get('error')}")
+                        conn.disconnect()
+                        return {
+                            "success": False,
+                            "error": f"Failed to cancel order in TWS: {cancel_result.get('error')}"
+                        }, 500
+                        
+                    logger.info(f"Successfully requested cancellation in TWS for order ID {ib_order_id}")
+                    
+                    # Even if TWS accepts the cancellation request, the order might not be canceled immediately
+                    # Check the actual status
+                    ib_status = conn.check_order_status(ib_order_id)
+                    conn.disconnect()
+                    
+                    if ib_status.get('status') in ['PendingCancel', 'Cancelled', 'ApiCancelled']:
+                        # Order is being canceled or already canceled in TWS
+                        execution_details = {
+                            "ib_order_id": ib_order_id,
+                            "ib_status": ib_status.get('status'),
+                            "filled": ib_status.get('filled', 0),
+                            "remaining": ib_status.get('remaining', 0),
+                            "avg_fill_price": ib_status.get('avg_fill_price', 0),
+                            "last_updated": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        }
+                        
+                        # Update order status in database
+                        db.update_order_status(
+                            order_id=order_id,
+                            status="canceled",
+                            execution_details=execution_details
+                        )
+                        
+                        return {
+                            "success": True,
+                            "message": "Order canceled in TWS",
+                            "order_id": order_id,
+                            "ib_status": ib_status.get('status')
+                        }, 200
+                    else:
+                        # Order status doesn't indicate cancellation yet, but we requested it
+                        execution_details = {
+                            "ib_order_id": ib_order_id,
+                            "ib_status": "PendingCancel",  # Force this status as we've requested cancellation
+                            "last_updated": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        }
+                        
+                        # Update order status in database to indicate cancellation pending
+                        db.update_order_status(
+                            order_id=order_id,
+                            status="canceling",
+                            execution_details=execution_details
+                        )
+                        
+                        return {
+                            "success": True,
+                            "message": "Order cancellation requested in TWS",
+                            "order_id": order_id,
+                            "ib_status": "PendingCancel"
+                        }, 200
+                except Exception as e:
+                    logger.error(f"Error canceling order in TWS: {str(e)}")
+                    logger.error(traceback.format_exc())
+                    if conn:
+                        conn.disconnect()
+                    return {
+                        "success": False,
+                        "error": f"Error canceling order in TWS: {str(e)}"
+                    }, 500
+            
+            # For pending orders or if we couldn't connect to TWS, just update the database
+            db.update_order_status(
+                order_id=order_id,
+                status="canceled",
+                execution_details={"last_updated": datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+            )
+            
+            logger.info(f"Order with ID {order_id} marked as canceled in database")
+            return {
+                "success": True,
+                "message": "Order canceled",
+                "order_id": order_id
+            }, 200
+                
+        except Exception as e:
+            logger.error(f"Error canceling order: {str(e)}")
+            logger.error(traceback.format_exc())
+            return {
+                "success": False,
+                "error": str(e)
+            }, 500 

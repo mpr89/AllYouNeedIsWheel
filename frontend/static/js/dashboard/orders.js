@@ -1,12 +1,16 @@
 /**
  * Orders module for handling pending orders
  */
-import { fetchPendingOrders, cancelOrder, executeOrder } from './api.js';
+import { fetchPendingOrders, cancelOrder, executeOrder, checkOrderStatus } from './api.js';
 import { showAlert, getBadgeColor } from '../utils/alerts.js';
 import { formatCurrency } from './account.js';
 
 // Store orders data
 let pendingOrdersData = [];
+
+// Auto-refresh timer
+let autoRefreshTimer = null;
+const AUTO_REFRESH_INTERVAL = 10000; // 10 seconds
 
 /**
  * Format date for display
@@ -75,6 +79,10 @@ function updatePendingOrdersTable() {
         const ibOrderId = order.ib_order_id || 'Not sent';
         const ibStatus = order.ib_status || '-';
         
+        // Format execution price if available
+        const avgFillPrice = order.avg_fill_price ? formatCurrency(order.avg_fill_price) : '-';
+        const commission = order.commission ? formatCurrency(order.commission) : '-';
+        
         // Status area with IB info
         let statusHtml = `
             <span class="badge bg-${badgeColor}">${order.status}</span>
@@ -94,6 +102,25 @@ function updatePendingOrdersTable() {
                     <strong>Status:</strong> ${ibStatus}
                 </small>
             `;
+            
+            // Add fill price and commission if order is executed
+            if (order.status === 'executed' && order.avg_fill_price) {
+                statusHtml += `
+                    <br>
+                    <small class="text-muted">
+                        <strong>Fill Price:</strong> ${avgFillPrice}
+                    </small>
+                `;
+                
+                if (order.commission) {
+                    statusHtml += `
+                        <br>
+                        <small class="text-muted">
+                            <strong>Commission:</strong> ${commission}
+                        </small>
+                    `;
+                }
+            }
         }
         
         // Create the row HTML
@@ -109,7 +136,7 @@ function updatePendingOrdersTable() {
                     <button class="btn btn-outline-primary execute-order" data-order-id="${order.id}" ${order.status !== 'pending' ? 'disabled' : ''}>
                         <i class="bi bi-play-fill"></i> Execute
                     </button>
-                    <button class="btn btn-outline-danger cancel-order" data-order-id="${order.id}" ${order.status !== 'pending' ? 'disabled' : ''}>
+                    <button class="btn btn-outline-danger cancel-order" data-order-id="${order.id}" ${['executed', 'canceled', 'rejected'].includes(order.status) ? 'disabled' : ''}>
                         <i class="bi bi-x-circle"></i> Cancel
                     </button>
                 </div>
@@ -187,6 +214,9 @@ async function executeOrderById(orderId) {
         
         // Show success message
         showAlert(`Order sent to TWS (IB Order ID: ${result.ib_order_id})`, 'success');
+        
+        // Start auto-refresh if not already running to track this order's status
+        startAutoRefresh();
     } catch (error) {
         console.error('Error executing order:', error);
         showAlert(`Error executing order: ${error.message}`, 'danger');
@@ -199,19 +229,28 @@ async function executeOrderById(orderId) {
  */
 async function cancelOrderById(orderId) {
     try {
-        await cancelOrder(orderId);
+        // Use the improved cancel order endpoint
+        const result = await cancelOrder(orderId);
         
         // Update the order in pendingOrdersData
         const orderIndex = pendingOrdersData.findIndex(order => order.id == orderId);
         if (orderIndex !== -1) {
             // Update the order status
-            pendingOrdersData[orderIndex].status = "cancelled";
+            pendingOrdersData[orderIndex].status = result.ib_status === 'PendingCancel' ? 'canceling' : 'canceled';
+            
+            // Add IB details if available
+            if (result.ib_status) {
+                pendingOrdersData[orderIndex].ib_status = result.ib_status;
+            }
             
             // Update the table immediately
             updatePendingOrdersTable();
         }
         
-        showAlert('Order cancelled successfully', 'success');
+        showAlert('Order cancellation requested', 'success');
+        
+        // Start auto-refresh if not already running to track this canceled order's status
+        startAutoRefresh();
     } catch (error) {
         console.error('Error cancelling order:', error);
         showAlert(`Error cancelling order: ${error.message}`, 'danger');
@@ -234,8 +273,92 @@ async function loadPendingOrders() {
     }
 }
 
+/**
+ * Check for order status updates with TWS
+ */
+async function checkOrdersStatus() {
+    try {
+        // Only check if we have processing or canceling orders
+        const hasProcessingOrders = pendingOrdersData.some(order => 
+            ['processing', 'canceling'].includes(order.status));
+            
+        if (hasProcessingOrders) {
+            const result = await checkOrderStatus();
+            
+            if (result && result.success && result.updated_orders && result.updated_orders.length > 0) {
+                // Update the orders that changed
+                result.updated_orders.forEach(updatedOrder => {
+                    const orderIndex = pendingOrdersData.findIndex(order => order.id == updatedOrder.id);
+                    if (orderIndex !== -1) {
+                        // Update the order with new status and details
+                        pendingOrdersData[orderIndex] = {
+                            ...pendingOrdersData[orderIndex],
+                            ...updatedOrder
+                        };
+                    }
+                });
+                
+                // Update the table with the new data
+                updatePendingOrdersTable();
+                
+                // If no more processing orders, stop auto-refresh
+                const stillHasProcessingOrders = pendingOrdersData.some(order => 
+                    ['processing', 'canceling'].includes(order.status));
+                    
+                if (!stillHasProcessingOrders) {
+                    stopAutoRefresh();
+                }
+            }
+        } else {
+            // No processing orders, no need for auto-refresh
+            stopAutoRefresh();
+        }
+    } catch (error) {
+        console.error('Error checking order status:', error);
+        // Don't show alert for this routine operation
+    }
+}
+
+/**
+ * Start the auto-refresh timer for order status
+ */
+function startAutoRefresh() {
+    // Don't create multiple timers
+    if (autoRefreshTimer) {
+        return;
+    }
+    
+    // Create a new timer
+    autoRefreshTimer = setInterval(checkOrdersStatus, AUTO_REFRESH_INTERVAL);
+    console.log('Auto-refresh started');
+}
+
+/**
+ * Stop the auto-refresh timer
+ */
+function stopAutoRefresh() {
+    if (autoRefreshTimer) {
+        clearInterval(autoRefreshTimer);
+        autoRefreshTimer = null;
+        console.log('Auto-refresh stopped');
+    }
+}
+
 // Set up event listener for the custom ordersUpdated event
 document.addEventListener('ordersUpdated', loadPendingOrders);
+
+// Initial load of pending orders
+document.addEventListener('DOMContentLoaded', () => {
+    loadPendingOrders();
+    
+    // Check for any processing orders on initial load and start auto-refresh if needed
+    if (pendingOrdersData.some(order => ['processing', 'canceling'].includes(order.status))) {
+        startAutoRefresh();
+    }
+});
+
+// Make sure auto-refresh is stopped when the page is unloaded
+window.addEventListener('beforeunload', stopAutoRefresh);
 
 // Export functions
 export {

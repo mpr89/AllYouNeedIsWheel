@@ -869,15 +869,14 @@ class IBConnection:
             
     def place_order(self, contract, order):
         """
-        Place an order with TWS
+        Place an order for a contract
         
         Args:
-            contract (Contract): Contract object (e.g., Option)
-            order (Order): Order object
+            contract: The contract to trade
+            order: The order to place
             
         Returns:
-            dict: Order result with order_id and trade info
-            None: If an error occurs
+            dict: Result with order details
         """
         if not self.is_connected():
             logger.error("Cannot place order - not connected to TWS")
@@ -933,3 +932,141 @@ class IBConnection:
             logger.error(f"Error placing order: {str(e)}")
             logger.error(traceback.format_exc())
             return None
+
+    def check_order_status(self, order_id):
+        """
+        Check the status of an order by its IB order ID
+        
+        Args:
+            order_id (int): The IB order ID to check
+            
+        Returns:
+            dict: Order status information
+        """
+        logger.info(f"Checking status of order with IB ID: {order_id}")
+        
+        try:
+            # Ensure connection
+            if not self.is_connected():
+                logger.error("Not connected to TWS")
+                return None
+            
+            # Ensure order ID is an integer
+            order_id = int(order_id)
+            
+            # Get all open orders
+            open_orders = self.ib.openOrders()
+            
+            # Check if order is in open orders
+            for o in open_orders:
+                if o.orderId == order_id:
+                    logger.info(f"Found open order with ID {order_id}, status: {o.orderStatus.status}")
+                    return {
+                        'status': o.orderStatus.status,
+                        'filled': o.orderStatus.filled,
+                        'remaining': o.orderStatus.remaining,
+                        'avg_fill_price': float(o.orderStatus.avgFillPrice or 0),
+                        'last_fill_price': float(o.orderStatus.lastFillPrice or 0),
+                        'commission': float(o.orderStatus.commission or 0),
+                        'why_held': o.orderStatus.whyHeld
+                    }
+            
+            # Check execution history if not found in open orders
+            executions = self.ib.executions()
+            for execution in executions:
+                if execution.orderId == order_id:
+                    logger.info(f"Found completed order with ID {order_id}")
+                    # Get commission info from commissions report
+                    commission = 0
+                    for fill in self.ib.fills():
+                        if fill.execution.orderId == order_id:
+                            commission += float(fill.commissionReport.commission or 0)
+                    
+                    # Map to our standard format
+                    return {
+                        'status': 'Filled',
+                        'filled': execution.shares,
+                        'remaining': 0,
+                        'avg_fill_price': float(execution.price or 0),
+                        'commission': commission
+                    }
+            
+            # If we didn't find it in open orders or executions,
+            # it might be cancelled or rejected
+            trades = self.ib.trades()
+            for trade in trades:
+                if trade.order.orderId == order_id:
+                    logger.info(f"Found trade with order ID {order_id}, status: {trade.orderStatus.status}")
+                    return {
+                        'status': trade.orderStatus.status,
+                        'filled': trade.orderStatus.filled,
+                        'remaining': trade.orderStatus.remaining,
+                        'avg_fill_price': float(trade.orderStatus.avgFillPrice or 0),
+                        'last_fill_price': float(trade.orderStatus.lastFillPrice or 0),
+                        'commission': float(trade.orderStatus.commission or 0),
+                        'why_held': trade.orderStatus.whyHeld
+                    }
+            
+            # Order not found
+            logger.warning(f"Order with ID {order_id} not found")
+            return {
+                'status': 'NotFound',
+                'filled': 0,
+                'remaining': 0,
+                'avg_fill_price': 0
+            }
+            
+        except Exception as e:
+            logger.error(f"Error checking order status: {str(e)}")
+            logger.error(traceback.format_exc())
+            return None
+        
+    def cancel_order(self, order_id):
+        """
+        Cancel an open order by its IB order ID
+        
+        Args:
+            order_id (int): The IB order ID to cancel
+            
+        Returns:
+            dict: Result with success/failure info
+        """
+        logger.info(f"Cancelling order with IB ID: {order_id}")
+        
+        try:
+            # Ensure connection
+            if not self.is_connected():
+                logger.error("Not connected to TWS")
+                return {'success': False, 'error': 'Not connected to TWS'}
+            
+            # Ensure order ID is an integer
+            order_id = int(order_id)
+            
+            # Get all open orders
+            open_orders = self.ib.openOrders()
+            
+            # Find the order to cancel
+            order_to_cancel = None
+            for o in open_orders:
+                if o.orderId == order_id:
+                    order_to_cancel = o
+                    break
+            
+            if not order_to_cancel:
+                logger.warning(f"Order with ID {order_id} not found in open orders")
+                return {'success': False, 'error': f"Order with ID {order_id} not found in open orders"}
+            
+            # Cancel the order
+            logger.info(f"Cancelling order: {order_to_cancel}")
+            try:
+                self.ib.cancelOrder(order_to_cancel)
+                logger.info(f"Cancellation request sent for order {order_id}")
+                return {'success': True, 'message': f"Cancellation request sent for order {order_id}"}
+            except Exception as e:
+                logger.error(f"Error cancelling order: {str(e)}")
+                return {'success': False, 'error': str(e)}
+            
+        except Exception as e:
+            logger.error(f"Error in cancel_order: {str(e)}")
+            logger.error(traceback.format_exc())
+            return {'success': False, 'error': str(e)}
