@@ -35,7 +35,7 @@ function updateOptionsTable() {
     const tickers = Object.keys(tickersData);
     
     if (tickers.length === 0) {
-        optionsTable.innerHTML = '<tr><td colspan="9" class="text-center">No tickers available. Please add tickers first.</td></tr>';
+        optionsTable.innerHTML = '<tr><td colspan="10" class="text-center">No tickers available. Please add tickers first.</td></tr>';
         return;
     }
     
@@ -48,7 +48,7 @@ function updateOptionsTable() {
             const row = document.createElement('tr');
             row.innerHTML = `
                 <td>${ticker}</td>
-                <td colspan="7">No data available</td>
+                <td colspan="8">No data available</td>
                 <td>
                     <button class="btn btn-sm btn-outline-primary refresh-options" data-ticker="${ticker}">
                         <i class="bi bi-arrow-repeat"></i> Refresh
@@ -97,6 +97,13 @@ function updateOptionsTable() {
         // Format the OTM percentage for display
         const otmDisplayValue = formatPercentage(Math.max(callOTMPercent, putOTMPercent));
         
+        // Get delta values for display
+        const callDelta = callOption ? callOption.delta || 0 : 0;
+        const putDelta = putOption ? putOption.delta || 0 : 0;
+        
+        // Format delta for display - we'll show both call and put deltas
+        const deltaDisplay = `C: ${callDelta.toFixed(2)} / P: ${putDelta.toFixed(2)}`;
+        
         // Format the call details
         const callDetails = callOption ? 
             `${callOption.expiration} $${callOption.strike}` : 
@@ -129,6 +136,7 @@ function updateOptionsTable() {
                     <span class="input-group-text" id="otm-value-${ticker}">${tickerData.otmPercentage || 10}%</span>
                 </div>
             </td>
+            <td>${deltaDisplay}</td>
             <td>${callDetails}</td>
             <td>${callPremium}</td>
             <td>${putDetails}</td>
