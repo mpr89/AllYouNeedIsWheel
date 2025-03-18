@@ -7,6 +7,7 @@ import os
 import json
 from datetime import datetime
 from pathlib import Path
+import traceback
 
 class OptionsDatabase:
     """
@@ -254,6 +255,10 @@ class OptionsDatabase:
             bool: True if successful, False otherwise
         """
         try:
+            print(f"DEBUG: Updating order {order_id} status to '{status}', executed={executed}")
+            if execution_details:
+                print(f"DEBUG: Execution details: {json.dumps(execution_details, indent=2)}")
+                
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
@@ -294,14 +299,34 @@ class OptionsDatabase:
                         WHERE id = ?
                     '''.format(', '.join(set_clauses))
             
+            print(f"DEBUG: SQL Query: {update_query}")
+            print(f"DEBUG: Query parameters: {params}")
+            
             # Execute the query
             cursor.execute(update_query, params)
+            
+            # Check if any rows were affected
+            affected_rows = cursor.rowcount
+            print(f"DEBUG: Affected rows: {affected_rows}")
+            
             conn.commit()
+            print(f"DEBUG: Changes committed to database.")
+            
+            # Verify the update by reading the order back
+            verification_cursor = conn.cursor()
+            verification_cursor.execute("SELECT status, executed FROM orders WHERE id = ?", (order_id,))
+            verification_result = verification_cursor.fetchone()
+            if verification_result:
+                print(f"DEBUG: Verification - Status: {verification_result[0]}, Executed: {verification_result[1]}")
+            else:
+                print(f"DEBUG: Verification failed - order {order_id} not found after update")
+                
             conn.close()
             
-            return True
+            return affected_rows > 0
         except Exception as e:
-            print(f"Error updating order status: {str(e)}")
+            print(f"ERROR: Error updating order status: {str(e)}")
+            print(f"ERROR: {traceback.format_exc()}")
             return False
             
     def delete_order(self, order_id):

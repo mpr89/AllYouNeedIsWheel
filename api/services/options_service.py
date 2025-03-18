@@ -465,12 +465,24 @@ class OptionsService:
             }
             
             # Update order status to 'processing'
-            db.update_order_status(
+            logger.info(f"Updating order {order_id} status to 'processing' with execution details: {execution_details}")
+            update_result = db.update_order_status(
                 order_id=order_id,
                 status="processing",
                 executed=True,  # Mark as executed since it's been sent to IBKR
                 execution_details=execution_details
             )
+            
+            # Verify that the update was successful
+            if update_result:
+                logger.info(f"Order status update successful")
+            else:
+                logger.warning(f"Order status update may have failed. Checking current status...")
+                current_order = db.get_order(order_id)
+                if current_order:
+                    logger.info(f"Current order status: {current_order.get('status')}, executed: {current_order.get('executed')}")
+                else:
+                    logger.error(f"Could not retrieve order {order_id} after update")
             
             logger.info(f"Order with ID {order_id} sent to TWS, IB order ID: {result.get('order_id')}")
             return {
@@ -849,6 +861,12 @@ class OptionsService:
                     limit=50  # Limit to most recent orders
                 )
                 logger.info(f"Found {len(orders)} pending/processing orders to check")
+                
+                # Debug: Print details of each order found
+                for i, order in enumerate(orders):
+                    logger.info(f"Order {i+1}: ID={order.get('id')}, Status={order.get('status')}, " +
+                                f"Executed={order.get('executed')}, IB ID={order.get('ib_order_id', 'None')}")
+                    
             except Exception as db_error:
                 logger.error(f"Error retrieving orders from database: {str(db_error)}")
                 logger.error(traceback.format_exc())
@@ -912,20 +930,33 @@ class OptionsService:
                             }
                             
                             # Update database with new status
-                            db.update_order_status(
+                            logger.info(f"Updating order {order_id} with new status: {new_status}, executed: {executed}")
+                            update_result = db.update_order_status(
                                 order_id=order_id,
                                 status=new_status,
                                 executed=executed,  # Set executed flag based on status
                                 execution_details=execution_details
                             )
                             
-                            # Add to list of updated orders
-                            updated_order = order.copy()
-                            updated_order['status'] = new_status
-                            updated_order.update(execution_details)
-                            updated_orders.append(updated_order)
-                            
-                            logger.info(f"Updated order {order_id} status to {new_status}, IB status: {ib_status.get('status')}")
+                            if update_result:
+                                logger.info(f"Successfully updated order {order_id} in database")
+                                
+                                # Add to list of updated orders
+                                updated_order = order.copy()
+                                updated_order['status'] = new_status
+                                updated_order.update(execution_details)
+                                updated_orders.append(updated_order)
+                                
+                                logger.info(f"Updated order {order_id} status to {new_status}, IB status: {ib_status.get('status')}")
+                            else:
+                                logger.error(f"Failed to update order {order_id} in database")
+                                # Verify current order status
+                                current_order = db.get_order(order_id)
+                                if current_order:
+                                    logger.info(f"Current order status: {current_order.get('status')}, " +
+                                               f"executed: {current_order.get('executed')}")
+                                else:
+                                    logger.error(f"Could not find order {order_id} in database after update attempt")
                     except Exception as e:
                         logger.error(f"Error checking status for order {order_id}: {str(e)}")
                         logger.error(traceback.format_exc())

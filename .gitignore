@@ -31,4 +31,4 @@ reports/
 options.db
 trades.db 
 
-connection.json
+connection*.json
