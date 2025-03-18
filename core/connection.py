@@ -882,47 +882,43 @@ class IBConnection:
             logger.error("Cannot place order - not connected to TWS")
             return None
             
-        try:
-            # Check if we're in read-only mode
-            if self.readonly:
-                logger.warning("Cannot place order - connection in read-only mode")
-                # Return mock data
-                mock_order_id = int(time.time()) % 10000
-                return {
-                    'order_id': mock_order_id,
-                    'status': 'submitted',
-                    'filled': 0,
-                    'remaining': order.totalQuantity,
-                    'avg_fill_price': 0,
-                    'perm_id': mock_order_id,
-                    'last_fill_price': 0,
-                    'client_id': self.client_id,
-                    'why_held': '',
-                    'market_cap': 0,
-                    'is_mock': True
-                }
-                
+        try:   
             # Place the order
             trade = self.ib.placeOrder(contract, order)
             
             # Wait for order acknowledgment (order ID assigned)
             timeout = 3  # seconds
             start_time = time.time()
+            
+            # Check if we have a valid trade object with orderStatus
+            if not hasattr(trade, 'orderStatus'):
+                logger.warning("No orderStatus in trade object, returning basic order data")
+                # Create a basic result with just the order ID
+                return {
+                    'order_id': getattr(order, 'orderId', 0),
+                    'status': 'Submitted',
+                    'filled': 0,
+                    'remaining': getattr(order, 'totalQuantity', 0),
+                    'avg_fill_price': 0,
+                    'is_mock': False
+                }
+                
+            # Wait for order ID to be assigned
             while not trade.orderStatus.orderId and time.time() - start_time < timeout:
                 self.ib.waitOnUpdate(timeout=0.1)
                 
-            # Get order status
+            # Create result dictionary with safe attribute access
             order_status = {
-                'order_id': trade.orderStatus.orderId,
-                'status': trade.orderStatus.status,
-                'filled': trade.orderStatus.filled,
-                'remaining': trade.orderStatus.remaining,
-                'avg_fill_price': trade.orderStatus.avgFillPrice,
-                'perm_id': trade.orderStatus.permId,
-                'last_fill_price': trade.orderStatus.lastFillPrice,
-                'client_id': trade.orderStatus.clientId,
-                'why_held': trade.orderStatus.whyHeld,
-                'market_cap': trade.orderStatus.mktCapPrice,
+                'order_id': getattr(trade.orderStatus, 'orderId', 0),
+                'status': getattr(trade.orderStatus, 'status', 'Submitted'),
+                'filled': getattr(trade.orderStatus, 'filled', 0),
+                'remaining': getattr(trade.orderStatus, 'remaining', getattr(order, 'totalQuantity', 0)),
+                'avg_fill_price': getattr(trade.orderStatus, 'avgFillPrice', 0),
+                'perm_id': getattr(trade.orderStatus, 'permId', 0),
+                'last_fill_price': getattr(trade.orderStatus, 'lastFillPrice', 0),
+                'client_id': getattr(trade.orderStatus, 'clientId', 0),
+                'why_held': getattr(trade.orderStatus, 'whyHeld', ''),
+                'market_cap': getattr(trade.orderStatus, 'mktCapPrice', 0),
                 'is_mock': False
             }
             
@@ -931,6 +927,21 @@ class IBConnection:
         except Exception as e:
             logger.error(f"Error placing order: {str(e)}")
             logger.error(traceback.format_exc())
+            # If we at least have an order ID, return that with an error status
+            try:
+                order_id = getattr(order, 'orderId', 0)
+                if order_id > 0:
+                    return {
+                        'order_id': order_id, 
+                        'status': 'Error',
+                        'filled': 0,
+                        'remaining': getattr(order, 'totalQuantity', 0),
+                        'error': str(e),
+                        'is_mock': False
+                    }
+            except:
+                pass
+            
             return None
 
     def check_order_status(self, order_id):
@@ -941,9 +952,9 @@ class IBConnection:
             order_id (int): The IB order ID to check
             
         Returns:
-            dict: Order status information
+            dict: Order status information or None if error
         """
-        logger.info(f"Checking status of order with IB ID: {order_id}")
+        logger.info(f"Checking status for order with IB ID: {order_id}")
         
         try:
             # Ensure connection
@@ -959,19 +970,48 @@ class IBConnection:
             
             # Check if order is in open orders
             for o in open_orders:
-                if o.orderId == order_id:
-                    logger.info(f"Found open order with ID {order_id}, status: {o.orderStatus.status}")
+                if hasattr(o, 'orderId') and o.orderId == order_id:
+                    # Check if it's a contract+order tuple or an order with status
+                    if hasattr(o, 'orderStatus'):
+                        logger.info(f"Found open order with ID {order_id}, status: {o.orderStatus.status}")
+                        return {
+                            'status': o.orderStatus.status,
+                            'filled': o.orderStatus.filled,
+                            'remaining': o.orderStatus.remaining,
+                            'avg_fill_price': float(o.orderStatus.avgFillPrice or 0),
+                            'last_fill_price': float(o.orderStatus.lastFillPrice or 0),
+                            'commission': float(o.orderStatus.commission or 0),
+                            'why_held': o.orderStatus.whyHeld
+                        }
+                    else:
+                        # This might be just the order object without status
+                        logger.info(f"Found open order with ID {order_id}, but no status information")
+                        return {
+                            'status': 'Submitted',  # Default status for found orders
+                            'filled': 0,
+                            'remaining': o.totalQuantity if hasattr(o, 'totalQuantity') else 0,
+                            'avg_fill_price': 0,
+                            'last_fill_price': 0,
+                            'commission': 0,
+                            'why_held': ''
+                        }
+            
+            # Check trades for this order ID
+            trades = self.ib.trades()
+            for trade in trades:
+                if hasattr(trade.order, 'orderId') and trade.order.orderId == order_id:
+                    logger.info(f"Found trade with order ID {order_id}, status: {trade.orderStatus.status}")
                     return {
-                        'status': o.orderStatus.status,
-                        'filled': o.orderStatus.filled,
-                        'remaining': o.orderStatus.remaining,
-                        'avg_fill_price': float(o.orderStatus.avgFillPrice or 0),
-                        'last_fill_price': float(o.orderStatus.lastFillPrice or 0),
-                        'commission': float(o.orderStatus.commission or 0),
-                        'why_held': o.orderStatus.whyHeld
+                        'status': trade.orderStatus.status,
+                        'filled': trade.orderStatus.filled,
+                        'remaining': trade.orderStatus.remaining,
+                        'avg_fill_price': float(trade.orderStatus.avgFillPrice or 0),
+                        'last_fill_price': float(trade.orderStatus.lastFillPrice or 0),
+                        'commission': float(trade.orderStatus.commission or 0),
+                        'why_held': trade.orderStatus.whyHeld
                     }
             
-            # Check execution history if not found in open orders
+            # Check execution history if not found in open orders or trades
             executions = self.ib.executions()
             for execution in executions:
                 if execution.orderId == order_id:
@@ -989,22 +1029,6 @@ class IBConnection:
                         'remaining': 0,
                         'avg_fill_price': float(execution.price or 0),
                         'commission': commission
-                    }
-            
-            # If we didn't find it in open orders or executions,
-            # it might be cancelled or rejected
-            trades = self.ib.trades()
-            for trade in trades:
-                if trade.order.orderId == order_id:
-                    logger.info(f"Found trade with order ID {order_id}, status: {trade.orderStatus.status}")
-                    return {
-                        'status': trade.orderStatus.status,
-                        'filled': trade.orderStatus.filled,
-                        'remaining': trade.orderStatus.remaining,
-                        'avg_fill_price': float(trade.orderStatus.avgFillPrice or 0),
-                        'last_fill_price': float(trade.orderStatus.lastFillPrice or 0),
-                        'commission': float(trade.orderStatus.commission or 0),
-                        'why_held': trade.orderStatus.whyHeld
                     }
             
             # Order not found
@@ -1048,12 +1072,20 @@ class IBConnection:
             # Find the order to cancel
             order_to_cancel = None
             for o in open_orders:
-                if o.orderId == order_id:
+                if hasattr(o, 'orderId') and o.orderId == order_id:
                     order_to_cancel = o
                     break
             
+            # If not found in open orders, check trades
             if not order_to_cancel:
-                logger.warning(f"Order with ID {order_id} not found in open orders")
+                trades = self.ib.trades()
+                for trade in trades:
+                    if hasattr(trade.order, 'orderId') and trade.order.orderId == order_id:
+                        order_to_cancel = trade.order
+                        break
+            
+            if not order_to_cancel:
+                logger.warning(f"Order with ID {order_id} not found in open orders or trades")
                 return {'success': False, 'error': f"Order with ID {order_id} not found in open orders"}
             
             # Cancel the order
