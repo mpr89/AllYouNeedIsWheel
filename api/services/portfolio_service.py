@@ -145,7 +145,7 @@ class PortfolioService:
             # Transform to API response format
             result = []
             positions = portfolio_data.get('positions', {})
-            
+            logger.info(f"Positions: {positions}")
             for symbol, pos in positions.items():
                 try:
                     # Handle different types of position data

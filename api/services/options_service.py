@@ -453,7 +453,7 @@ class OptionsService:
                     "success": False,
                     "error": "Failed to place order"
                 }, 500
-                
+            logger.info(f"Order placed successfully: {result}")
             # Update order status in database
             execution_details = {
                 "ib_order_id": result.get('order_id'),

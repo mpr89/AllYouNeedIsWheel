@@ -268,7 +268,7 @@ class OptionsDatabase:
                 SET status = ?, executed = ?
                 WHERE id = ?
             '''
-            params = [status, executed, order_id]
+            params = [status, executed]
             
             # If we have execution details, update those fields too
             if execution_details and isinstance(execution_details, dict):
@@ -290,6 +290,7 @@ class OptionsDatabase:
                         set_clauses.append(f"{db_field} = ?")
                         params.append(execution_details[api_field])
                 
+                params.append(order_id)
                 # If we have additional fields to set, add them to the query
                 if set_clauses:
                     # Reconstruct the query with the additional fields
