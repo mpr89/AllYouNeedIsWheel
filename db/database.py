@@ -13,7 +13,7 @@ class OptionsDatabase:
     """
     Class for logging options recommendations to SQLite database
     """
-    def __init__(self, db_path=None):
+    def __init__(self, db_name=None):
         """
         Initialize the options database
         
@@ -21,10 +21,10 @@ class OptionsDatabase:
             db_path (str, optional): Path to the SQLite database. 
                                     If None, creates 'options.db' in current directory.
         """
-        if db_path is None:
+        if db_name is None:
             db_path = Path.cwd() / 'options.db'
         else:
-            db_path = Path(db_path)
+            db_path = Path.cwd() / db_name
             
         self.db_path = db_path
         self._create_tables_if_not_exist()
@@ -159,7 +159,6 @@ class OptionsDatabase:
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            
             # Extract data from order
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             ticker = order_data.get('ticker', '')

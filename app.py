@@ -19,15 +19,10 @@ def create_application():
     # Create the app through the factory function
     app = create_app()
     
-    # Initialize the database
-    db_path = os.environ.get('DB_PATH', 'options.db')
-    logger.info(f"Initializing database at {db_path}")
-    options_db = OptionsDatabase(db_path)
-    app.config['database'] = options_db
-    
     # Load connection configuration
     connection_config_path = os.environ.get('CONNECTION_CONFIG', 'connection.json')
     logger.info(f"Loading connection configuration from: {connection_config_path}")
+
     connection_config = {}
     
     if os.path.exists(connection_config_path):
@@ -35,6 +30,11 @@ def create_application():
             with open(connection_config_path, 'r') as f:
                 connection_config = json.load(f)
                 logger.info(f"Loaded connection configuration from {connection_config_path}")
+                # Initialize the database
+                db_path = connection_config['db_path']
+                logger.info(f"Initializing database at {db_path}")
+                options_db = OptionsDatabase(db_path)
+                app.config['database'] = options_db
         except Exception as e:
             logger.error(f"Error loading connection configuration: {str(e)}")
             # Use default values

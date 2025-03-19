@@ -28,7 +28,8 @@ class OptionsService:
         self.config = Config()
         logger.info(f"Options service using port: {self.config.get('port')}")
         self.connection = None
-        self.db = OptionsDatabase()
+        db_path = self.config.get('db_path')
+        self.db = OptionsDatabase(db_path)
         self.portfolio_service = None  # Will be initialized when needed
         
     def _ensure_connection(self):
