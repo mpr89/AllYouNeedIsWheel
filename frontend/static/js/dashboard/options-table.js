@@ -451,15 +451,26 @@ async function orderOptionsForTicker(ticker) {
         return;
     }
     
+    // Get position information (number of shares owned)
+    const sharesOwned = optionData.position || 0;
+    
+    // Calculate max call contracts based on current share position (100 shares per contract)
+    const maxCallContracts = Math.floor(sharesOwned / 100);
+    
     try {
         // Save the call option order
         if (callOption) {
+            // Set quantity to match current position for call options
+            const callQuantity = maxCallContracts || 1; // Default to 1 if no position
+            
             const callOrderData = {
                 ticker: ticker,
                 option_type: 'CALL',
                 strike: callOption.strike,
                 expiration: callOption.expiration,
                 premium: callOption.ask || 0,
+                quantity: callQuantity,
+                action: 'SELL', // Default to selling calls
                 details: JSON.stringify(callOption)
             };
             
@@ -469,12 +480,18 @@ async function orderOptionsForTicker(ticker) {
         
         // Save the put option order
         if (putOption) {
+            // For put options, calculate quantity based on "fully covered by cash"
+            // If we don't have that data, use the same quantity as calls or default to 1
+            const putQuantity = maxCallContracts || 1; // Use the same logic for now, but could be replaced with cash-based calculation
+            
             const putOrderData = {
                 ticker: ticker,
                 option_type: 'PUT',
                 strike: putOption.strike,
                 expiration: putOption.expiration,
                 premium: putOption.ask || 0,
+                quantity: putQuantity,
+                action: 'SELL', // Default to selling puts
                 details: JSON.stringify(putOption)
             };
             

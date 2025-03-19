@@ -127,6 +127,9 @@ function updatePendingOrdersTable() {
         const avgFillPrice = order.avg_fill_price ? formatCurrency(order.avg_fill_price) : '-';
         const commission = order.commission ? formatCurrency(order.commission) : '-';
         
+        // Set quantity or default to 1
+        const quantity = order.quantity || 1;
+        
         // Status area with IB info
         let statusHtml = `
             <span class="badge bg-${badgeColor}">${order.status}</span>
@@ -173,6 +176,11 @@ function updatePendingOrdersTable() {
             }
         }
         
+        // Create quantity input or display based on order status
+        const quantityCell = order.status === 'pending' 
+            ? `<input type="number" class="form-control form-control-sm quantity-input" data-order-id="${order.id}" value="${quantity}" min="1" max="100">`
+            : `${quantity}`;
+        
         // Create the row HTML
         row.innerHTML = `
             <td>${order.ticker}</td>
@@ -180,6 +188,7 @@ function updatePendingOrdersTable() {
             <td>${strike}</td>
             <td>${order.expiration || 'N/A'}</td>
             <td>${premium}</td>
+            <td>${quantityCell}</td>
             <td>${statusHtml}</td>
             <td>
                 <div class="btn-group btn-group-sm">
@@ -223,75 +232,69 @@ function updateFilledOrdersTable() {
     
     if (filledOrdersData.length === 0) {
         console.log('No filled orders to display');
-        filledOrdersTable.innerHTML = '<tr><td colspan="8" class="text-center">No filled orders found</td></tr>';
-        updateWeeklyEarningsSummary([], 0);
+        filledOrdersTable.innerHTML = '<tr><td colspan="9" class="text-center">No filled orders found</td></tr>';
         return;
     }
     
-    // Sort filled orders by fill date (newest first)
-    filledOrdersData.sort((a, b) => {
-        const dateA = new Date(a.filled_at || a.last_updated || a.timestamp || a.created_at);
-        const dateB = new Date(b.filled_at || b.last_updated || b.timestamp || b.created_at);
-        return dateB - dateA;
+    // Filter for executed orders in the current week
+    const weeklyOrders = filledOrdersData.filter(order => {
+        return order.status === 'executed' && isWithinCurrentWeek(order.timestamp || order.created_at);
     });
     
-    // Filter for orders filled this week
-    const thisWeekOrders = filledOrdersData.filter(order => {
-        const fillDate = new Date(order.filled_at || order.last_updated || order.timestamp || order.created_at);
-        return isWithinCurrentWeek(fillDate);
-    });
+    // Calculate total earnings from weekly orders
+    let totalEarnings = 0;
     
-    // Calculate total earnings for the week
-    let weeklyEarnings = 0;
-    
-    // Add each filled order to the table
+    // Add each order to the table
     filledOrdersData.forEach(order => {
         const row = document.createElement('tr');
         
         // Format the strike price
         const strike = order.strike ? `$${order.strike}` : 'N/A';
         
-        // Get fill price and commission
-        const fillPrice = order.avg_fill_price || 0;
+        // Set quantity or default to 1
+        const quantity = order.quantity || 1;
+        
+        // Calculate premiums
+        const fillPrice = order.avg_fill_price || order.premium || 0;
         const commission = order.commission || 0;
+        const netPremium = (fillPrice * 100 * quantity) - commission;
         
-        // Calculate net premium (fill price - commission)
-        const netPremium = fillPrice * 100 - commission; // Multiplied by 100 to get total premium for a contract
+        // Format the premium values
+        const fillPriceFormatted = formatCurrency(fillPrice);
+        const commissionFormatted = formatCurrency(commission);
+        const netPremiumFormatted = formatCurrency(netPremium);
         
-        // Add to weekly earnings if this order was filled this week
-        const fillDate = new Date(order.filled_at || order.last_updated || order.timestamp || order.created_at);
-        if (isWithinCurrentWeek(fillDate)) {
-            weeklyEarnings += netPremium;
+        // Format the filled date
+        let filledDate = order.last_updated || order.timestamp || order.created_at;
+        filledDate = formatDate(filledDate);
+        
+        // Highlight weekly orders
+        const rowClass = isWithinCurrentWeek(order.timestamp || order.created_at) ? 'table-success' : '';
+        
+        // Add to weekly earnings if order is from current week
+        if (isWithinCurrentWeek(order.timestamp || order.created_at)) {
+            totalEarnings += netPremium;
         }
         
-        // Format date
-        const formattedFillDate = formatDate(order.filled_at || order.last_updated || order.timestamp || order.created_at);
-        
-        // Determine if this is a recent order (this week)
-        const isRecentOrder = isWithinCurrentWeek(fillDate);
-        
         // Create the row HTML
+        row.className = rowClass;
         row.innerHTML = `
             <td>${order.ticker}</td>
             <td>${order.option_type}</td>
             <td>${strike}</td>
             <td>${order.expiration || 'N/A'}</td>
-            <td>${formatCurrency(fillPrice)}</td>
-            <td>${formatCurrency(commission)}</td>
-            <td>${formatCurrency(netPremium)}</td>
-            <td>${formattedFillDate}</td>
+            <td>${fillPriceFormatted}</td>
+            <td>${quantity}</td>
+            <td>${commissionFormatted}</td>
+            <td>${netPremiumFormatted}</td>
+            <td>${filledDate}</td>
         `;
-        
-        // Highlight recent orders
-        if (isRecentOrder) {
-            row.classList.add('table-success');
-        }
         
         filledOrdersTable.appendChild(row);
     });
     
-    // Update the weekly earnings summary
-    updateWeeklyEarningsSummary(thisWeekOrders, weeklyEarnings);
+    // Add weekly earnings summary
+    updateWeeklyEarningsSummary(weeklyOrders, totalEarnings);
 }
 
 /**
@@ -310,24 +313,58 @@ function updateWeeklyEarningsSummary(weeklyOrders, totalEarnings) {
 }
 
 /**
- * Add event listeners to the orders table buttons
+ * Add event listeners to the orders table
  */
 function addOrdersTableEventListeners() {
-    // Add listeners to execute buttons
-    document.querySelectorAll('.execute-order').forEach(button => {
-        button.addEventListener('click', async (event) => {
-            const orderId = event.currentTarget.dataset.orderId;
-            // Remove confirmation dialog and execute directly
-            await executeOrderById(orderId);
+    // Add event listeners to Execute buttons
+    const executeButtons = document.querySelectorAll('.execute-order');
+    executeButtons.forEach(button => {
+        button.addEventListener('click', event => {
+            const orderId = event.target.dataset.orderId || event.target.closest('button').dataset.orderId;
+            executeOrderById(orderId);
         });
     });
     
-    // Add listeners to cancel buttons
-    document.querySelectorAll('.cancel-order').forEach(button => {
-        button.addEventListener('click', async (event) => {
-            const orderId = event.currentTarget.dataset.orderId;
-            // Remove confirmation dialog and cancel directly
-            await cancelOrderById(orderId);
+    // Add event listeners to Cancel buttons
+    const cancelButtons = document.querySelectorAll('.cancel-order');
+    cancelButtons.forEach(button => {
+        button.addEventListener('click', event => {
+            const orderId = event.target.dataset.orderId || event.target.closest('button').dataset.orderId;
+            cancelOrderById(orderId);
+        });
+    });
+    
+    // Add event listeners to quantity inputs
+    const quantityInputs = document.querySelectorAll('.quantity-input');
+    quantityInputs.forEach(input => {
+        // Handle input change
+        input.addEventListener('change', event => {
+            const orderId = event.target.dataset.orderId;
+            const newQuantity = parseInt(event.target.value, 10);
+            if (orderId && !isNaN(newQuantity) && newQuantity > 0) {
+                updateOrderQuantity(orderId, newQuantity);
+            } else {
+                // Reset to previous value if invalid
+                const order = pendingOrdersData.find(o => o.id === parseInt(orderId, 10));
+                if (order) {
+                    event.target.value = order.quantity || 1;
+                }
+            }
+        });
+        
+        // Handle blur event (when losing focus)
+        input.addEventListener('blur', event => {
+            const orderId = event.target.dataset.orderId;
+            const newQuantity = parseInt(event.target.value, 10);
+            if (orderId && !isNaN(newQuantity) && newQuantity > 0) {
+                updateOrderQuantity(orderId, newQuantity);
+            } else {
+                // Reset to previous value if invalid
+                const order = pendingOrdersData.find(o => o.id === parseInt(orderId, 10));
+                if (order) {
+                    event.target.value = order.quantity || 1;
+                }
+            }
         });
     });
     
@@ -555,6 +592,54 @@ function stopAutoRefresh() {
         clearInterval(autoRefreshTimer);
         autoRefreshTimer = null;
         console.log('Auto-refresh stopped');
+    }
+}
+
+/**
+ * Update the quantity for an order
+ * @param {string|number} orderId - The ID of the order to update
+ * @param {number} quantity - The new quantity value
+ */
+async function updateOrderQuantity(orderId, quantity) {
+    try {
+        // Find the order in our local data
+        const orderIndex = pendingOrdersData.findIndex(o => o.id === parseInt(orderId, 10));
+        if (orderIndex === -1) {
+            console.error(`Order with ID ${orderId} not found in local data`);
+            return;
+        }
+        
+        // Update the quantity in our local data
+        pendingOrdersData[orderIndex].quantity = quantity;
+        
+        // Update the quantity in the database via API
+        // (This requires a new API endpoint to be implemented)
+        const response = await fetch(`/api/options/order/${orderId}/quantity`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ quantity })
+        });
+        
+        if (!response.ok) {
+            console.error(`Error updating quantity: HTTP ${response.status}`);
+            const responseText = await response.text();
+            console.error(`Response: ${responseText}`);
+            // Show error message
+            showAlert(`Failed to update quantity: ${response.statusText}`, 'danger');
+            return;
+        }
+        
+        const result = await response.json();
+        console.log(`Quantity updated for order ${orderId}:`, result);
+        
+        // Show success message
+        showAlert(`Quantity updated to ${quantity}`, 'success');
+        
+    } catch (error) {
+        console.error(`Error updating quantity for order ${orderId}:`, error);
+        showAlert(`Error updating quantity: ${error.message}`, 'danger');
     }
 }
 

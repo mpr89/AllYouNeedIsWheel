@@ -201,4 +201,69 @@ def cancel_order(order_id):
         logger.error(f"Error canceling order: {str(e)}")
         logger.error(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
+
+@bp.route('/order/<int:order_id>/quantity', methods=['PUT'])
+def update_order_quantity(order_id):
+    """
+    Update the quantity of a specific order
+    
+    Args:
+        order_id (int): ID of the order to update
+        
+    Returns:
+        JSON response with success status
+    """
+    logger.info(f"PUT /order/{order_id}/quantity request received")
+    
+    try:
+        # Get request data
+        request_data = request.json
+        if not request_data or 'quantity' not in request_data:
+            logger.error("Missing quantity in request")
+            return jsonify({"error": "Missing quantity in request"}), 400
+            
+        quantity = int(request_data['quantity'])
+        if quantity <= 0:
+            logger.error(f"Invalid quantity: {quantity}")
+            return jsonify({"error": "Quantity must be greater than 0"}), 400
+            
+        # Get the database instance
+        db = current_app.config.get('database')
+        if not db:
+            logger.error("Database not initialized")
+            return jsonify({"error": "Database not initialized"}), 500
+            
+        # Try to get the order first to ensure it exists
+        order = db.get_order(order_id)
+        if not order:
+            logger.error(f"Order with ID {order_id} not found")
+            return jsonify({"error": f"Order with ID {order_id} not found"}), 404
+            
+        # Check if order is in editable state
+        if order['status'] != 'pending':
+            logger.error(f"Cannot update quantity for order with status '{order['status']}'")
+            return jsonify({"error": f"Cannot update quantity for non-pending orders"}), 400
+            
+        # Update the order quantity
+        success = db.update_order_quantity(order_id, quantity)
+        
+        if success:
+            logger.info(f"Order with ID {order_id} quantity updated to {quantity}")
+            return jsonify({
+                "success": True, 
+                "message": f"Order quantity updated to {quantity}",
+                "order_id": order_id,
+                "quantity": quantity
+            }), 200
+        else:
+            logger.error(f"Failed to update quantity for order with ID {order_id}")
+            return jsonify({"error": "Failed to update order quantity"}), 500
+            
+    except ValueError as ve:
+        logger.error(f"Invalid quantity value: {str(ve)}")
+        return jsonify({"error": "Invalid quantity value"}), 400
+    except Exception as e:
+        logger.error(f"Error updating order quantity: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
        
