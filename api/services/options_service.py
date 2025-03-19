@@ -567,6 +567,33 @@ class OptionsService:
         # Store stock price in result
         result['stock_price'] = stock_price
         
+        # Get position information from portfolio
+        position_size = 0
+        try:
+            # Import and use portfolio service to get position size if not already initialized
+            if self.portfolio_service is None:
+                from api.services.portfolio_service import PortfolioService
+                self.portfolio_service = PortfolioService()
+            
+            # Get positions from portfolio service
+            positions = self.portfolio_service.get_positions()
+            
+            # Find the matching ticker in positions
+            for pos in positions:
+                if pos.get('symbol') == ticker:
+                    position_size = pos.get('position', 0)
+                    logger.info(f"Found position for {ticker}: {position_size} shares")
+                    break
+            
+            if position_size == 0:
+                logger.info(f"No position found for {ticker}, using 0 shares")
+        except Exception as e:
+            logger.error(f"Error getting position for {ticker}: {e}")
+            logger.error(traceback.format_exc())
+        
+        # Store position size in result
+        result['position'] = position_size
+        
         # Get options chain - either real or mock
         options_data = {}
         if conn and conn.is_connected() and is_market_open:

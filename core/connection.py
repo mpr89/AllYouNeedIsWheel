@@ -460,9 +460,10 @@ class IBConnection:
     def get_portfolio(self):
         """
         Get current portfolio positions and account information from IB
+        Returns only Stock positions (filters out Options and other security types)
         
         Returns:
-            dict: Dictionary containing account information and positions
+            dict: Dictionary containing account information and stock positions
             
         Raises:
             ConnectionError: If connection fails during market hours
@@ -507,34 +508,49 @@ class IBConnection:
             portfolio = self.ib.portfolio()
             positions = {}
             
+            # Filter for Stock positions only (excluding Options)
+            stock_count = 0
+            option_count = 0
+            
+            # Import Stock class to use with isinstance check
+            
             for position in portfolio:
-                symbol = position.contract.symbol
-                market_price = position.marketPrice
-                
-                positions[symbol] = {
-                    'shares': position.position,
-                    'avg_cost': position.averageCost,
-                    'market_price': market_price,
-                    'market_value': position.marketValue,
-                    'unrealized_pnl': position.unrealizedPNL,
-                    'realized_pnl': position.realizedPNL,
-                    'contract': position.contract
-                }
+                try:
+                    # Check if contract is a Stock (not an Option)
+                    if isinstance(position.contract, Stock):
+                        stock_count += 1
+                        symbol = position.contract.symbol
+                        
+                        positions[symbol] = {
+                            'shares': position.position,
+                            'avg_cost': position.averageCost,
+                            'market_price': position.marketPrice,
+                            'market_value': position.marketValue,
+                            'unrealized_pnl': position.unrealizedPNL,
+                            'realized_pnl': position.realizedPNL,
+                            'contract': position.contract
+                        }
+                    else:
+                        option_count += 1
+                except Exception as e:
+                    logger.error(f"Error processing position: {str(e)}")
+            
+            logger.info(f"Processed {stock_count} stock positions, filtered out {option_count} option/other positions")
             
             if not positions:
                 if is_market_open:
-                    raise ValueError("No position data available during market hours")
+                    raise ValueError("No stock positions available during market hours")
                 else:
-                    logger.info("No positions found during closed market. Using mock portfolio data.")
+                    logger.info("No stock positions found during closed market. Using mock portfolio data.")
                     return self._generate_mock_portfolio()
             
             return {
                 'account_id': account_id,
                 'available_cash': account_info.get('available_cash', 0),
                 'account_value': account_info.get('account_value', 0),
-            'positions': positions,
-            'is_mock': False
-        }
+                'positions': positions,
+                'is_mock': False
+            }
         
         except Exception as e:
             if is_market_open:

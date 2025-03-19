@@ -61,7 +61,12 @@ function updateOptionsTable() {
         
         // We have data for this ticker
         const optionData = tickerData.data.data[ticker];
-        const currentPrice = optionData.price || 0;
+        
+        // Get the stock price from optionData
+        const stockPrice = optionData.stock_price || 0;
+        
+        // Get position information (number of shares owned)
+        const sharesOwned = optionData.position || 0;
         
         // Get call option data
         let callOption = null;
@@ -85,13 +90,13 @@ function updateOptionsTable() {
         // Calculate OTM percentage for call
         let callOTMPercent = 0;
         if (callOption) {
-            callOTMPercent = calculateOTMPercentage(callOption.strike, currentPrice);
+            callOTMPercent = calculateOTMPercentage(callOption.strike, stockPrice);
         }
         
         // Calculate OTM percentage for put (for puts, the formula is reversed)
         let putOTMPercent = 0;
         if (putOption) {
-            putOTMPercent = calculateOTMPercentage(currentPrice, putOption.strike);
+            putOTMPercent = calculateOTMPercentage(stockPrice, putOption.strike);
         }
         
         // Format the OTM percentage for display
@@ -114,20 +119,34 @@ function updateOptionsTable() {
             `${putOption.expiration} $${putOption.strike}` : 
             'No put option';
         
-        // Format the premium prices
+        // Calculate premium earnings based on number of shares owned
+        // Each option contract is for 100 shares
+        const maxCallContracts = Math.floor(sharesOwned / 100);
+        const callAskPrice = callOption && callOption.ask ? callOption.ask : 0;
+        const callPremiumPerContract = callAskPrice * 100; // Premium per contract (100 shares)
+        const totalCallPremium = callPremiumPerContract * maxCallContracts;
+        
+        // Calculate put premium (cash secured puts)
+        const putAskPrice = putOption && putOption.ask ? putOption.ask : 0;
+        const putPremiumPerContract = putAskPrice * 100;
+        // Assuming one put contract per 100 shares equivalent of cash
+        const maxPutContracts = Math.floor(sharesOwned / 100);
+        const totalPutPremium = putPremiumPerContract * maxPutContracts;
+        
+        // Format the premium prices with estimated earnings
         const callPremium = callOption && callOption.ask ? 
-            formatCurrency(callOption.ask) : 
+            `${formatCurrency(callOption.ask)} (${maxCallContracts} contracts: ${formatCurrency(totalCallPremium)})` : 
             'N/A';
         
         const putPremium = putOption && putOption.ask ? 
-            formatCurrency(putOption.ask) : 
+            `${formatCurrency(putOption.ask)} (${maxPutContracts} contracts: ${formatCurrency(totalPutPremium)})` : 
             'N/A';
         
         // Build the row HTML with OTM slider control
         row.innerHTML = `
             <td>${ticker}</td>
-            <td>${formatCurrency(currentPrice)}</td>
-            <td>${optionData.position || 0} shares</td>
+            <td>${formatCurrency(stockPrice)}</td>
+            <td>${sharesOwned} shares</td>
             <td>
                 <div class="input-group input-group-sm" style="width: 120px;">
                     <input type="range" class="form-range otm-slider" id="otm-${ticker}" 
