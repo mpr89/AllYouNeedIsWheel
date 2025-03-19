@@ -33,7 +33,71 @@
                 </div>
             </div>
             <div class="card-footer">
-                <small class="text-muted">Manage your pending option orders here. Click Execute to send an order to Interactive Brokers.</small>
+                <div class="d-flex justify-content-between align-items-center">
+                    <small class="text-muted">Manage your pending option orders here. Click Execute to send an order to Interactive Brokers.</small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Filled Orders & Earnings Section -->
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card shadow-sm">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Filled Orders & Weekly Earnings</h5>
+                <div class="d-flex align-items-center">
+                    <button id="refresh-filled-orders" class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Symbol</th>
+                                <th>Type</th>
+                                <th>Strike</th>
+                                <th>Expiration</th>
+                                <th>Fill Price</th>
+                                <th>Commission</th>
+                                <th>Net Premium</th>
+                                <th>Filled Date</th>
+                            </tr>
+                        </thead>
+                        <tbody id="filled-orders-table">
+                            <tr>
+                                <td colspan="8" class="text-center">Loading filled orders...</td>
+                            </tr>
+                        </tbody>
+                        <tfoot class="table-dark">
+                            <tr id="weekly-earnings-summary">
+                                <td colspan="8" class="text-center">
+                                    <div class="d-flex justify-content-around align-items-center py-2">
+                                        <div class="text-center">
+                                            <h6 class="mb-0">This Week's Earnings</h6>
+                                            <span class="fs-5 fw-bold" id="weekly-earnings-total">$0.00</span>
+                                        </div>
+                                        <div class="text-center">
+                                            <h6 class="mb-0">Order Count</h6>
+                                            <span class="fs-5 fw-bold" id="weekly-order-count">0</span>
+                                        </div>
+                                        <div class="text-center">
+                                            <h6 class="mb-0">Average Premium/Order</h6>
+                                            <span class="fs-5 fw-bold" id="weekly-average-premium">$0.00</span>
+                                        </div>
+                                    </div>
+                                </td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+            <div class="card-footer">
+                <small class="text-muted">Filled orders from the current week and total earnings summary.</small>
             </div>
         </div>
     </div>

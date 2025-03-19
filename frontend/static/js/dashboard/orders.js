@@ -7,6 +7,7 @@ import { formatCurrency } from './account.js';
 
 // Store orders data
 let pendingOrdersData = [];
+let filledOrdersData = [];
 
 // Auto-refresh timer
 let autoRefreshTimer = null;
@@ -18,17 +19,60 @@ const AUTO_REFRESH_INTERVAL = 10000; // 10 seconds
  * @returns {string} The formatted date
  */
 function formatDate(dateString) {
-    if (!dateString) return 'N/A';
+    if (!dateString) return '';
     
     // Handle Unix timestamp (seconds since epoch)
     if (typeof dateString === 'number' || !isNaN(parseInt(dateString))) {
         // Convert to milliseconds if it's in seconds
         const timestamp = parseInt(dateString) * (dateString.toString().length <= 10 ? 1000 : 1);
+        
+        // Check if this is a Unix epoch date (Jan 1, 1970) or very close to it
+        if (timestamp < 86400000) { // Less than 1 day from epoch
+            return ''; // Return empty string instead of showing 1970/1/1
+        }
+        
         return new Date(timestamp).toLocaleString();
     }
     
     // Handle regular date string
-    return new Date(dateString).toLocaleString();
+    const date = new Date(dateString);
+    
+    // Check if this is a valid date and not Jan 1, 1970
+    if (isNaN(date.getTime()) || date.getFullYear() === 1970) {
+        return '';
+    }
+    
+    return date.toLocaleString();
+}
+
+/**
+ * Check if a date is within the current week
+ * @param {Date|string|number} date - The date to check
+ * @returns {boolean} True if the date is within the current week
+ */
+function isWithinCurrentWeek(date) {
+    if (!date) return false;
+    
+    // Convert to Date object if it's not already
+    const dateObj = typeof date === 'object' ? date : new Date(date);
+    
+    // If date is invalid, return false
+    if (isNaN(dateObj.getTime())) return false;
+    
+    const now = new Date();
+    
+    // Get the first day of the current week (Sunday)
+    const firstDayOfWeek = new Date(now);
+    firstDayOfWeek.setDate(now.getDate() - now.getDay());
+    firstDayOfWeek.setHours(0, 0, 0, 0);
+    
+    // Get the last day of the current week (Saturday)
+    const lastDayOfWeek = new Date(firstDayOfWeek);
+    lastDayOfWeek.setDate(firstDayOfWeek.getDate() + 6);
+    lastDayOfWeek.setHours(23, 59, 59, 999);
+    
+    // Check if the date is within the current week
+    return dateObj >= firstDayOfWeek && dateObj <= lastDayOfWeek;
 }
 
 /**
@@ -86,9 +130,15 @@ function updatePendingOrdersTable() {
         // Status area with IB info
         let statusHtml = `
             <span class="badge bg-${badgeColor}">${order.status}</span>
-            <br>
-            <small class="text-muted">${createdAt}</small>
         `;
+        
+        // Add date only if it's not empty
+        if (createdAt) {
+            statusHtml += `
+                <br>
+                <small class="text-muted">${createdAt}</small>
+            `;
+        }
         
         // Add IB info if order has been executed
         if (order.status !== 'pending') {
@@ -148,6 +198,115 @@ function updatePendingOrdersTable() {
     
     // Add event listeners
     addOrdersTableEventListeners();
+    
+    // Also update the filled orders if any order was executed
+    updateFilledOrdersTable();
+}
+
+/**
+ * Update the filled orders table and calculate weekly earnings
+ */
+function updateFilledOrdersTable() {
+    const filledOrdersTable = document.getElementById('filled-orders-table');
+    if (!filledOrdersTable) {
+        console.error('Could not find filled-orders-table element in the DOM');
+        return;
+    }
+    
+    console.log(`Updating filled orders table with ${filledOrdersData.length} orders`);
+    
+    // Clear the table
+    filledOrdersTable.innerHTML = '';
+    
+    // Note: We're no longer re-filtering from pendingOrdersData here
+    // filledOrdersData is already populated with executed orders from the API
+    
+    if (filledOrdersData.length === 0) {
+        console.log('No filled orders to display');
+        filledOrdersTable.innerHTML = '<tr><td colspan="8" class="text-center">No filled orders found</td></tr>';
+        updateWeeklyEarningsSummary([], 0);
+        return;
+    }
+    
+    // Sort filled orders by fill date (newest first)
+    filledOrdersData.sort((a, b) => {
+        const dateA = new Date(a.filled_at || a.last_updated || a.timestamp || a.created_at);
+        const dateB = new Date(b.filled_at || b.last_updated || b.timestamp || b.created_at);
+        return dateB - dateA;
+    });
+    
+    // Filter for orders filled this week
+    const thisWeekOrders = filledOrdersData.filter(order => {
+        const fillDate = new Date(order.filled_at || order.last_updated || order.timestamp || order.created_at);
+        return isWithinCurrentWeek(fillDate);
+    });
+    
+    // Calculate total earnings for the week
+    let weeklyEarnings = 0;
+    
+    // Add each filled order to the table
+    filledOrdersData.forEach(order => {
+        const row = document.createElement('tr');
+        
+        // Format the strike price
+        const strike = order.strike ? `$${order.strike}` : 'N/A';
+        
+        // Get fill price and commission
+        const fillPrice = order.avg_fill_price || 0;
+        const commission = order.commission || 0;
+        
+        // Calculate net premium (fill price - commission)
+        const netPremium = fillPrice * 100 - commission; // Multiplied by 100 to get total premium for a contract
+        
+        // Add to weekly earnings if this order was filled this week
+        const fillDate = new Date(order.filled_at || order.last_updated || order.timestamp || order.created_at);
+        if (isWithinCurrentWeek(fillDate)) {
+            weeklyEarnings += netPremium;
+        }
+        
+        // Format date
+        const formattedFillDate = formatDate(order.filled_at || order.last_updated || order.timestamp || order.created_at);
+        
+        // Determine if this is a recent order (this week)
+        const isRecentOrder = isWithinCurrentWeek(fillDate);
+        
+        // Create the row HTML
+        row.innerHTML = `
+            <td>${order.ticker}</td>
+            <td>${order.option_type}</td>
+            <td>${strike}</td>
+            <td>${order.expiration || 'N/A'}</td>
+            <td>${formatCurrency(fillPrice)}</td>
+            <td>${formatCurrency(commission)}</td>
+            <td>${formatCurrency(netPremium)}</td>
+            <td>${formattedFillDate}</td>
+        `;
+        
+        // Highlight recent orders
+        if (isRecentOrder) {
+            row.classList.add('table-success');
+        }
+        
+        filledOrdersTable.appendChild(row);
+    });
+    
+    // Update the weekly earnings summary
+    updateWeeklyEarningsSummary(thisWeekOrders, weeklyEarnings);
+}
+
+/**
+ * Update the weekly earnings summary display
+ * @param {Array} weeklyOrders - Array of orders filled this week
+ * @param {number} totalEarnings - Total earnings for the week
+ */
+function updateWeeklyEarningsSummary(weeklyOrders, totalEarnings) {
+    const orderCount = weeklyOrders.length;
+    const averagePremium = orderCount > 0 ? totalEarnings / orderCount : 0;
+    
+    // Update the display elements
+    document.getElementById('weekly-earnings-total').textContent = formatCurrency(totalEarnings);
+    document.getElementById('weekly-order-count').textContent = orderCount;
+    document.getElementById('weekly-average-premium').textContent = formatCurrency(averagePremium);
 }
 
 /**
@@ -176,6 +335,12 @@ function addOrdersTableEventListeners() {
     const refreshPendingOrdersButton = document.getElementById('refresh-pending-orders');
     if (refreshPendingOrdersButton) {
         refreshPendingOrdersButton.addEventListener('click', loadPendingOrders);
+    }
+    
+    // Add listener to refresh filled orders button
+    const refreshFilledOrdersButton = document.getElementById('refresh-filled-orders');
+    if (refreshFilledOrdersButton) {
+        refreshFilledOrdersButton.addEventListener('click', loadFilledOrders);
     }
 }
 
@@ -262,14 +427,46 @@ async function cancelOrderById(orderId) {
  */
 async function loadPendingOrders() {
     try {
-        const data = await fetchPendingOrders();
-        if (data && data.orders) {
-            pendingOrdersData = data.orders;
+        // Fetch pending orders
+        const pendingData = await fetchPendingOrders(false);
+        if (pendingData && pendingData.orders) {
+            pendingOrdersData = pendingData.orders;
+            console.log(`Loaded ${pendingOrdersData.length} pending orders`);
             updatePendingOrdersTable();
         }
+        
+        // Also load filled orders
+        await loadFilledOrders();
     } catch (error) {
         console.error('Error loading pending orders:', error);
         showAlert('Error loading pending orders', 'danger');
+    }
+}
+
+/**
+ * Load executed/filled orders from API
+ */
+async function loadFilledOrders() {
+    try {
+        // Fetch executed orders
+        const executedData = await fetchPendingOrders(true);
+        if (executedData && executedData.orders) {
+            console.log(`Received ${executedData.orders.length} executed orders from API`);
+            
+            // Filter for orders that are actually executed (not canceled or rejected)
+            filledOrdersData = executedData.orders.filter(order => 
+                order.status === 'executed' && 
+                order.avg_fill_price
+            );
+            
+            console.log(`Filtered to ${filledOrdersData.length} filled orders with fill price`);
+            updateFilledOrdersTable();
+        } else {
+            console.warn('No executed orders data received from API');
+        }
+    } catch (error) {
+        console.error('Error loading filled orders:', error);
+        showAlert('Error loading filled orders', 'danger');
     }
 }
 
@@ -286,10 +483,21 @@ async function checkOrdersStatus() {
             const result = await checkOrderStatus();
             
             if (result && result.success && result.updated_orders && result.updated_orders.length > 0) {
+                console.log(`Received ${result.updated_orders.length} updated orders from status check`);
+                
+                // Track if any order's status changed to executed
+                let orderWasExecuted = false;
+                
                 // Update the orders that changed
                 result.updated_orders.forEach(updatedOrder => {
                     const orderIndex = pendingOrdersData.findIndex(order => order.id == updatedOrder.id);
                     if (orderIndex !== -1) {
+                        // Check if this order is newly executed
+                        if (pendingOrdersData[orderIndex].status !== 'executed' && 
+                            updatedOrder.status === 'executed') {
+                            orderWasExecuted = true;
+                        }
+                        
                         // Update the order with new status and details
                         pendingOrdersData[orderIndex] = {
                             ...pendingOrdersData[orderIndex],
@@ -298,8 +506,14 @@ async function checkOrdersStatus() {
                     }
                 });
                 
-                // Update the table with the new data
+                // Update the pending orders table
                 updatePendingOrdersTable();
+                
+                // If any order was executed, reload the filled orders
+                if (orderWasExecuted) {
+                    console.log('An order was executed, refreshing filled orders');
+                    await loadFilledOrders();
+                }
                 
                 // If no more processing orders, stop auto-refresh
                 const stillHasProcessingOrders = pendingOrdersData.some(order => 
@@ -363,6 +577,7 @@ window.addEventListener('beforeunload', stopAutoRefresh);
 // Export functions
 export {
     loadPendingOrders,
+    loadFilledOrders,
     executeOrderById,
     cancelOrderById
 }; 

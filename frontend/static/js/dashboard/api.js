@@ -93,18 +93,20 @@ async function fetchTickers() {
 
 /**
  * Fetch pending orders
- * @returns {Promise} Promise with pending orders data
+ * @param {boolean} executed - Whether to fetch executed orders (default: false)
+ * @returns {Promise} Promise with pending or executed orders data
  */
-async function fetchPendingOrders() {
+async function fetchPendingOrders(executed = false) {
     try {
-        const response = await fetch('/api/options/pending-orders');
+        const url = `/api/options/pending-orders${executed ? '?executed=true' : ''}`;
+        const response = await fetch(url);
         if (!response.ok) {
             throw new Error(`HTTP error ${response.status}`);
         }
         return await response.json();
     } catch (error) {
-        console.error('Error fetching pending orders:', error);
-        showAlert(`Error fetching pending orders: ${error.message}`, 'danger');
+        console.error('Error fetching orders:', error);
+        showAlert(`Error fetching orders: ${error.message}`, 'danger');
         return null;
     }
 }
