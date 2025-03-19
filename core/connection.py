@@ -983,6 +983,7 @@ class IBConnection:
             
             # Get all open orders
             open_orders = self.ib.openOrders()
+            print(f"open_orders: {open_orders}")
             
             # Check if order is in open orders
             for o in open_orders:

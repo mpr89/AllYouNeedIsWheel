@@ -22,6 +22,80 @@ function calculateOTMPercentage(strikePrice, currentPrice) {
 }
 
 /**
+ * Calculate earnings summary for all options
+ * @param {Object} tickersData - The data for all tickers
+ * @returns {Object} Summary of earnings
+ */
+function calculateEarningsSummary(tickersData) {
+    const summary = {
+        totalWeeklyCallPremium: 0,
+        totalWeeklyPutPremium: 0,
+        totalWeeklyPremium: 0,
+        portfolioValue: 0, // Will be calculated from position value
+        projectedAnnualEarnings: 0,
+        projectedAnnualReturn: 0
+    };
+    
+    // Process each ticker to get total premium earnings
+    Object.values(tickersData).forEach(tickerData => {
+        if (!tickerData || !tickerData.data || !tickerData.data.data) return;
+        
+        // Process each ticker's option data
+        Object.values(tickerData.data.data).forEach(optionData => {
+            // Add portfolio value from stock positions
+            const sharesOwned = optionData.position || 0;
+            const stockPrice = optionData.stock_price || 0;
+            summary.portfolioValue += sharesOwned * stockPrice;
+            
+            // Calculate max contracts based on shares owned
+            const maxCallContracts = Math.floor(sharesOwned / 100);
+            
+            // Process call option premiums
+            let callOption = null;
+            if (optionData.calls && optionData.calls.length > 0) {
+                callOption = optionData.calls[0];
+            } else if (optionData.call) {
+                callOption = optionData.call;
+            }
+            
+            if (callOption && callOption.ask) {
+                const callPremiumPerContract = callOption.ask * 100; // Premium per contract (100 shares)
+                const totalCallPremium = callPremiumPerContract * maxCallContracts;
+                summary.totalWeeklyCallPremium += totalCallPremium;
+            }
+            
+            // Process put option premiums
+            let putOption = null;
+            if (optionData.puts && optionData.puts.length > 0) {
+                putOption = optionData.puts[0];
+            } else if (optionData.put) {
+                putOption = optionData.put;
+            }
+            
+            if (putOption && putOption.ask) {
+                const putPremiumPerContract = putOption.ask * 100;
+                const maxPutContracts = Math.floor(sharesOwned / 100);
+                const totalPutPremium = putPremiumPerContract * maxPutContracts;
+                summary.totalWeeklyPutPremium += totalPutPremium;
+            }
+        });
+    });
+    
+    // Calculate total weekly premium
+    summary.totalWeeklyPremium = summary.totalWeeklyCallPremium + summary.totalWeeklyPutPremium;
+    
+    // Calculate projected annual earnings (assuming the same premium every week for 52 weeks)
+    summary.projectedAnnualEarnings = summary.totalWeeklyPremium * 52;
+    
+    // Calculate projected annual return as percentage of portfolio value
+    if (summary.portfolioValue > 0) {
+        summary.projectedAnnualReturn = (summary.projectedAnnualEarnings / summary.portfolioValue) * 100;
+    }
+    
+    return summary;
+}
+
+/**
  * Update options table with data
  */
 function updateOptionsTable() {
@@ -135,11 +209,11 @@ function updateOptionsTable() {
         
         // Format the premium prices with estimated earnings
         const callPremium = callOption && callOption.ask ? 
-            `${formatCurrency(callOption.ask)} (${maxCallContracts} contracts: ${formatCurrency(totalCallPremium)})` : 
+            `${formatCurrency(callOption.ask)} x${maxCallContracts} ${formatCurrency(totalCallPremium)}` : 
             'N/A';
         
         const putPremium = putOption && putOption.ask ? 
-            `${formatCurrency(putOption.ask)} (${maxPutContracts} contracts: ${formatCurrency(totalPutPremium)})` : 
+            `${formatCurrency(putOption.ask)} x${maxPutContracts} ${formatCurrency(totalPutPremium)}` : 
             'N/A';
         
         // Build the row HTML with OTM slider control
@@ -150,7 +224,7 @@ function updateOptionsTable() {
             <td>
                 <div class="input-group input-group-sm" style="width: 120px;">
                     <input type="range" class="form-range otm-slider" id="otm-${ticker}" 
-                           min="5" max="30" step="5" value="${tickerData.otmPercentage || 10}" 
+                           min="5" max="30" step="1" value="${tickerData.otmPercentage || 10}" 
                            data-ticker="${ticker}">
                     <span class="input-group-text" id="otm-value-${ticker}">${tickerData.otmPercentage || 10}%</span>
                 </div>
@@ -175,6 +249,42 @@ function updateOptionsTable() {
         // Add the row to the table
         optionsTable.appendChild(row);
     });
+    
+    // Add earnings summary section after the table
+    const summaryData = calculateEarningsSummary(tickersData);
+    
+    // Create summary row with colspan to take full width
+    const summaryRow = document.createElement('tr');
+    summaryRow.className = 'table-dark';
+    summaryRow.innerHTML = `
+        <td colspan="10" class="text-center">
+            <div class="d-flex justify-content-around align-items-center py-2">
+                <div class="text-center">
+                    <h6 class="mb-0">Weekly Premium</h6>
+                    <span class="fs-5 fw-bold">${formatCurrency(summaryData.totalWeeklyPremium)}</span>
+                    <div class="small text-muted">
+                        <span class="text-success">Calls: ${formatCurrency(summaryData.totalWeeklyCallPremium)}</span> | 
+                        <span class="text-danger">Puts: ${formatCurrency(summaryData.totalWeeklyPutPremium)}</span>
+                    </div>
+                </div>
+                <div class="text-center">
+                    <h6 class="mb-0">Projected Annual Earnings</h6>
+                    <span class="fs-5 fw-bold">${formatCurrency(summaryData.projectedAnnualEarnings)}</span>
+                    <div class="small text-muted">Based on 52 weeks</div>
+                </div>
+                <div class="text-center">
+                    <h6 class="mb-0">Portfolio Value</h6>
+                    <span class="fs-5 fw-bold">${formatCurrency(summaryData.portfolioValue)}</span>
+                </div>
+                <div class="text-center">
+                    <h6 class="mb-0">Projected Annual Return</h6>
+                    <span class="fs-5 fw-bold text-${summaryData.projectedAnnualReturn > 15 ? 'success' : 'primary'}">${formatPercentage(summaryData.projectedAnnualReturn)}</span>
+                    <div class="small text-muted">Of portfolio value</div>
+                </div>
+            </div>
+        </td>
+    `;
+    optionsTable.appendChild(summaryRow);
     
     // Add event listeners to buttons and sliders
     addOptionsTableEventListeners();

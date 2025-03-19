@@ -911,14 +911,7 @@ class OptionsService:
                 }
                 
             # Connect to TWS
-            suppress_ib_logs()
             conn = self._ensure_connection()
-            if not conn:
-                logger.error("Failed to connect to TWS for order status checking")
-                return {
-                    "success": False,
-                    "error": "Failed to connect to TWS"
-                }
                 
             updated_orders = []
             for order in orders:
