@@ -254,9 +254,9 @@ class OptionsDatabase:
             bool: True if successful, False otherwise
         """
         try:
-            print(f"DEBUG: Updating order {order_id} status to '{status}', executed={executed}")
-            if execution_details:
-                print(f"DEBUG: Execution details: {json.dumps(execution_details, indent=2)}")
+            #print(f"DEBUG: Updating order {order_id} status to '{status}', executed={executed}")
+            #if execution_details:
+                #print(f"DEBUG: Execution details: {json.dumps(execution_details, indent=2)}")
                 
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
@@ -299,8 +299,8 @@ class OptionsDatabase:
                         WHERE id = ?
                     '''.format(', '.join(set_clauses))
             
-            print(f"DEBUG: SQL Query: {update_query}")
-            print(f"DEBUG: Query parameters: {params}")
+            #print(f"DEBUG: SQL Query: {update_query}")
+            #print(f"DEBUG: Query parameters: {params}")
             
             # Execute the query
             cursor.execute(update_query, params)
