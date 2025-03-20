@@ -9,7 +9,6 @@ import time
 from core.connection import IBConnection
 from core.utils import print_stock_summary
 from config import Config
-import traceback
 
 logger = logging.getLogger('api.services.portfolio')
 
@@ -28,9 +27,10 @@ class PortfolioService:
         """
         try:
             if self.connection is None or not self.connection.is_connected():
-                # Use a fixed client ID from config instead of a random one
-                fixed_client_id = self.config.get('client_id', 1)
-                logger.info(f"Creating new TWS connection with fixed client ID: {fixed_client_id}")
+                # Generate a unique client ID based on current timestamp and random number
+                # to avoid conflicts with other connections
+                unique_client_id = int(time.time() % 10000) + random.randint(1000, 9999)
+                logger.info(f"Creating new TWS connection with client ID: {unique_client_id}")
                 
                 # Create new connection
                 port = self.config.get('port', 7497)
@@ -39,7 +39,7 @@ class PortfolioService:
                 self.connection = IBConnection(
                     host=self.config.get('host', '127.0.0.1'),
                     port=port,
-                    client_id=fixed_client_id,  # Use fixed client ID from config
+                    client_id=unique_client_id,  # Use the unique client ID instead of fixed ID 1
                     timeout=self.config.get('timeout', 20),
                     readonly=self.config.get('readonly', True)
                 )
@@ -48,11 +48,12 @@ class PortfolioService:
                 if not self.connection.connect():
                     logger.error("Failed to connect to TWS/IB Gateway")
                 else:
-                    logger.info(f"Successfully connected to TWS/IB Gateway with client ID {fixed_client_id}")
+                    logger.info("Successfully connected to TWS/IB Gateway")
             return self.connection
         except Exception as e:
             logger.error(f"Error ensuring connection: {str(e)}")
-            logger.error(traceback.format_exc())
+            if "There is no current event loop" in str(e):
+                logger.error("Asyncio event loop error - please check connection.py for proper handling")
             return None
         
     def get_portfolio_summary(self):

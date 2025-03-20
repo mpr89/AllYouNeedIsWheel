@@ -53,9 +53,9 @@ class OptionsService:
                     logger.warning("Failed to reconnect with existing client ID, will create new connection")
         
             # No connection or reconnection failed, create a new one
-            # Use a fixed client ID instead of a random one to ensure we can find orders across sessions
-            fixed_client_id = self.config.get('client_id', 1)
-            logger.info(f"Creating new TWS connection with fixed client ID: {fixed_client_id}")
+            # Generate a unique client ID based on current timestamp and random number
+            unique_client_id = int(time.time() % 10000) + random.randint(1000, 9999)
+            logger.info(f"Creating new TWS connection with client ID: {unique_client_id}")
             
             port = self.config.get('port', 7497)
             logger.info(f"Connecting to TWS on port: {port}")
@@ -63,7 +63,7 @@ class OptionsService:
             self.connection = IBConnection(
                 host=self.config.get('host', '127.0.0.1'),
                 port=port,
-                client_id=fixed_client_id,  # Use fixed client ID from config instead of random one
+                client_id=unique_client_id,  # Use the unique client ID instead of fixed ID 1
                 timeout=self.config.get('timeout', 20),
                 readonly=self.config.get('readonly', True)
             )
@@ -73,11 +73,12 @@ class OptionsService:
                 logger.error("Failed to connect to TWS/IB Gateway")
                 return None
             else:
-                logger.info(f"Successfully connected to TWS/IB Gateway with client ID {fixed_client_id}")
+                logger.info("Successfully connected to TWS/IB Gateway")
                 return self.connection
         except Exception as e:
             logger.error(f"Error ensuring connection: {str(e)}")
-            logger.error(traceback.format_exc())
+            if "There is no current event loop" in str(e):
+                logger.error("Asyncio event loop error - please check connection.py for proper handling")
             return None
         
     def _generate_mock_option_data(self, ticker, stock_price, otm_percentage, expiration):

@@ -112,13 +112,8 @@ class IBConnection:
             # Ensure event loop exists
             self._ensure_event_loop()
             
-            # Set read-only mode if requested
-            if self.readonly:
-                self.ib.clientId = self.client_id
-                self.ib.connect(self.host, self.port, clientId=self.client_id, readonly=True, timeout=self.timeout)
-            else:
-                self.ib.clientId = self.client_id
-                self.ib.connect(self.host, self.port, clientId=self.client_id, readonly=False, timeout=self.timeout)
+            self.ib.clientId = self.client_id
+            self.ib.connect(self.host, self.port, clientId=self.client_id, readonly=False, timeout=self.timeout)
             
             self._connected = self.ib.isConnected()
             if self._connected:
@@ -292,7 +287,6 @@ class IBConnection:
             
             # Filter available expirations if a specific one is requested
             available_expirations = chain.expirations
-            print(f"Available expirations: {available_expirations}")
             if expiration:
                 if expiration in available_expirations:
                     logger.info(f"Using requested expiration date: {expiration}")
