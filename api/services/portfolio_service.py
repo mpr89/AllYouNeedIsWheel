@@ -301,7 +301,7 @@ class PortfolioService:
             
     def get_weekly_option_income(self):
         """
-        Get all short option positions in the portfolio that expire next Friday
+        Get all short option positions in the portfolio that expire this coming Friday
         and calculate potential income.
         
         Returns:
@@ -333,17 +333,19 @@ class PortfolioService:
                     'error': 'Failed to retrieve portfolio data'
                 }
             
-            # Calculate next Friday's date in YYYYMMDD format
+            # Calculate this week's Friday date in YYYYMMDD format
             today = datetime.now()
+            # 4 represents Friday (0 is Monday, 4 is Friday in Python's weekday)
             days_until_friday = (4 - today.weekday()) % 7
-            if days_until_friday == 0:  # If today is Friday, get next Friday
-                days_until_friday = 7
-            next_friday = today + timedelta(days=days_until_friday)
-            next_friday_str = next_friday.strftime('%Y%m%d')
             
-            logger.info(f"Looking for options expiring on {next_friday_str}")
+            # If today is Friday (days_until_friday == 0), use today
+            # Otherwise, calculate upcoming Friday
+            this_friday = today if days_until_friday == 0 else today + timedelta(days=days_until_friday)
+            this_friday_str = this_friday.strftime('%Y%m%d')
             
-            # Filter for short option positions expiring next Friday
+            logger.info(f"Looking for options expiring this Friday: {this_friday_str}")
+            
+            # Filter for short option positions expiring this Friday
             positions = portfolio_data.get('positions', {})
             weekly_options = []
             total_income = 0
@@ -367,35 +369,43 @@ class PortfolioService:
                         # Get expiration date
                         expiration = contract.lastTradeDateOrContractMonth
                             
-                        # Check if this option expires next Friday
-                        if expiration == next_friday_str:
+                        # Check if this option expires this Friday
+                        if expiration == this_friday_str:
+                            # Get average cost (premium collected per contract)
+                            avg_cost = float(pos.get('avg_cost', 0))
+                            num_contracts = abs(position_value)
+                            
+                            # Calculate income (premium per contract * number of contracts)
+                            # Note: NO multiplication by 100 as avg_cost is already per contract
+                            income = avg_cost * num_contracts
+                            
                             # Get option details
                             option_data = {
                                 'symbol': contract.symbol,
                                 'option_type': contract.right,
                                 'strike': float(contract.strike),
                                 'expiration': expiration,
-                                'position': abs(position_value),  # Make positive for display
-                                'avg_cost': float(pos.get('avg_cost', 0)),
+                                'position': num_contracts,  # Number of contracts (positive for display)
+                                'avg_cost': avg_cost,  # Premium per contract
                                 'current_price': float(pos.get('market_price', 0)),
-                                'income': abs(float(pos.get('avg_cost', 0))) * 100 * abs(position_value)
+                                'income': income  # Total premium collected
                             }
                             
                             weekly_options.append(option_data)
-                            total_income += option_data['income']
+                            total_income += income
                             
-                            logger.debug(f"Found option expiring next Friday: {contract.symbol} {contract.right} {contract.strike}")
+                            logger.debug(f"Found option expiring this Friday: {contract.symbol} {contract.right} {contract.strike} - Income: ${income:.2f}")
                 except Exception as pos_error:
                     logger.error(f"Error processing option position {position_key}: {str(pos_error)}")
                     # Continue with next position
             
-            logger.info(f"Found {len(weekly_options)} short option positions expiring next Friday")
+            logger.info(f"Found {len(weekly_options)} short option positions expiring this Friday with total income: ${total_income:.2f}")
             
             return {
                 'positions': weekly_options,
                 'total_income': total_income,
                 'positions_count': len(weekly_options),
-                'next_friday': next_friday_str
+                'this_friday': this_friday_str
             }
             
         except Exception as e:
