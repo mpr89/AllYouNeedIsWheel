@@ -360,6 +360,66 @@ class OptionsDatabase:
             print(f"Error deleting order: {str(e)}")
             return False
             
+    def update_order_quantity(self, order_id, quantity):
+        """
+        Update the quantity of a specific order
+        
+        Args:
+            order_id (int): ID of the order to update
+            quantity (int): New quantity value
+            
+        Returns:
+            bool: True if update was successful, False otherwise
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Get current order to validate it exists and check its status
+            cursor.execute('''
+                SELECT status FROM orders
+                WHERE id = ?
+            ''', (order_id,))
+            
+            order = cursor.fetchone()
+            if not order:
+                print(f"No order found with ID {order_id}")
+                conn.close()
+                return False
+            
+            # Only update if the order is in 'pending' status
+            if order[0] != 'pending':
+                print(f"Cannot update quantity for order with status '{order[0]}'")
+                conn.close()
+                return False
+            
+            # Update the order quantity
+            cursor.execute('''
+                UPDATE orders 
+                SET quantity = ?,
+                    timestamp = ?
+                WHERE id = ?
+            ''', (quantity, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), order_id))
+            
+            # Check if any rows were updated
+            affected_rows = cursor.rowcount
+            
+            conn.commit()
+            conn.close()
+            
+            if affected_rows > 0:
+                print(f"Successfully updated quantity to {quantity} for order {order_id}")
+                return True
+            else:
+                print(f"No changes made to order {order_id}")
+                return False
+            
+        except Exception as e:
+            error_msg = f"Error updating order quantity: {str(e)}"
+            print(error_msg)
+            traceback.print_exc()
+            return False
+            
     def get_order(self, order_id):
         """
         Get a specific order by ID

@@ -279,10 +279,8 @@ class IBConnection:
             self.ib.cancelMktData(stock_contract)
             
             logger.info(f"Current price for {symbol}: ${stock_price}")
-            
             # Request option chain
             chains = self.ib.reqSecDefOptParams(stock_contract.symbol, '', stock_contract.secType, stock_contract.conId)
-            
             if not chains:
                 logger.error(f"No option chain found for {symbol}")
                 return None
@@ -294,30 +292,14 @@ class IBConnection:
             
             # Filter available expirations if a specific one is requested
             available_expirations = chain.expirations
+            print(f"Available expirations: {available_expirations}")
             if expiration:
                 if expiration in available_expirations:
                     logger.info(f"Using requested expiration date: {expiration}")
                     expirations = [expiration]
                 else:
-                    logger.warning(f"Requested expiration {expiration} not found in available expirations: {available_expirations}")
-                    # Find the closest expiration date if the requested one is not available
-                    if available_expirations:
-                        try:
-                            from datetime import datetime
-                            # Parse the requested expiration
-                            requested_date = datetime.strptime(expiration, '%Y%m%d')
-                            # Parse all available expirations
-                            exp_dates = [(exp, datetime.strptime(exp, '%Y%m%d')) for exp in available_expirations]
-                            # Find the closest expiration date
-                            closest_exp = min(exp_dates, key=lambda x: abs((x[1] - requested_date).days))
-                            logger.info(f"Using closest available expiration: {closest_exp[0]} (instead of {expiration})")
-                            expirations = [closest_exp[0]]
-                        except Exception as e:
-                            logger.error(f"Error finding closest expiration: {e}")
-                            expirations = [available_expirations[0]]
-                    else:
-                        logger.error(f"No expirations available for {symbol}")
-                        return None
+                    chain = next((c for c in chains if c.exchange == 'CBOE'), None)
+                    expirations = [expiration]
             else:
                 # If no expiration provided, use the first available one
                 if available_expirations:
