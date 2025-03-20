@@ -436,10 +436,10 @@ class IBConnection:
     def get_portfolio(self):
         """
         Get current portfolio positions and account information from IB
-        Returns only Stock positions (filters out Options and other security types)
+        Returns all positions (Stocks, Options, and other security types)
         
         Returns:
-            dict: Dictionary containing account information and stock positions
+            dict: Dictionary containing account information and all positions
             
         Raises:
             ConnectionError: If connection fails during market hours
@@ -484,40 +484,58 @@ class IBConnection:
             portfolio = self.ib.portfolio()
             positions = {}
             
-            # Filter for Stock positions only (excluding Options)
+            # Process all positions (both Stocks and Options)
             stock_count = 0
             option_count = 0
+            other_count = 0
             
-            # Import Stock class to use with isinstance check
+            # Import Option class for isinstance check
+            from ib_insync import Option
             
             for position in portfolio:
                 try:
-                    # Check if contract is a Stock (not an Option)
+                    symbol = position.contract.symbol
+                    position_key = symbol
+                    position_type = 'UNKNOWN'
+                    
+                    # Determine position type and create an appropriate key
                     if isinstance(position.contract, Stock):
+                        position_type = 'STK'
                         stock_count += 1
-                        symbol = position.contract.symbol
-                        
-                        positions[symbol] = {
-                            'shares': position.position,
-                            'avg_cost': position.averageCost,
-                            'market_price': position.marketPrice,
-                            'market_value': position.marketValue,
-                            'unrealized_pnl': position.unrealizedPNL,
-                            'realized_pnl': position.realizedPNL,
-                            'contract': position.contract
-                        }
-                    else:
+                    elif isinstance(position.contract, Option):
+                        position_type = 'OPT'
                         option_count += 1
+                        # For options, create a unique key including strike, expiry, and right
+                        expiry = position.contract.lastTradeDateOrContractMonth
+                        strike = position.contract.strike
+                        right = position.contract.right
+                        position_key = f"{symbol}_{expiry}_{strike}_{right}"
+                    else:
+                        position_type = position.contract.secType
+                        other_count += 1
+                    
+                    # Store position data
+                    positions[position_key] = {
+                        'shares': position.position,
+                        'avg_cost': position.averageCost,
+                        'market_price': position.marketPrice,
+                        'market_value': position.marketValue,
+                        'unrealized_pnl': position.unrealizedPNL,
+                        'realized_pnl': position.realizedPNL,
+                        'contract': position.contract,
+                        'security_type': position_type
+                    }
+                    
                 except Exception as e:
                     logger.error(f"Error processing position: {str(e)}")
             
-            logger.info(f"Processed {stock_count} stock positions, filtered out {option_count} option/other positions")
+            logger.info(f"Processed {stock_count} stock positions, {option_count} option positions, and {other_count} other positions")
             
             if not positions:
                 if is_market_open:
-                    raise ValueError("No stock positions available during market hours")
+                    raise ValueError("No positions available during market hours")
                 else:
-                    logger.info("No stock positions found during closed market. Using mock portfolio data.")
+                    logger.info("No positions found during closed market. Using mock portfolio data.")
                     return self._generate_mock_portfolio()
             
             return {
@@ -596,7 +614,7 @@ class IBConnection:
             }
     def _generate_mock_portfolio(self):
         """
-        Generate a mock portfolio with NVDA position and $1M cash
+        Generate a mock portfolio with stock and option positions and $1M cash
         
         Returns:
             dict: Mock portfolio data
@@ -609,10 +627,9 @@ class IBConnection:
         # Create mock account data
         account_id = "U1234567"  # Mock account number
         total_cash = 1000000.00  # $1M cash as requested
-        total_value = total_cash + nvda_value
         
-        # Create a contract for NVDA position
-        from ib_insync import Contract
+        # Create a contract for NVDA stock position
+        from ib_insync import Contract, Option
         nvda_contract = Contract(
             symbol="NVDA",
             secType="STK",
@@ -620,7 +637,49 @@ class IBConnection:
             currency="USD"
         )
         
-        # Create the portfolio object
+        # Create an option contract for a short NVDA put
+        from datetime import datetime, timedelta
+        # Calculate next Friday
+        today = datetime.now()
+        days_until_friday = (4 - today.weekday()) % 7
+        if days_until_friday == 0:  # If today is Friday, get next Friday
+            days_until_friday = 7
+        next_friday = today + timedelta(days=days_until_friday)
+        next_friday_str = next_friday.strftime('%Y%m%d')
+        
+        nvda_put_price = 15.50
+        nvda_put_strike = 850.0
+        nvda_put_quantity = -10  # Short 10 contracts
+        nvda_put_value = nvda_put_price * 100 * abs(nvda_put_quantity)
+        
+        nvda_put_contract = Option(
+            symbol="NVDA",
+            lastTradeDateOrContractMonth=next_friday_str,
+            strike=nvda_put_strike,
+            right='P',
+            exchange='SMART',
+            currency='USD'
+        )
+        
+        # Create an option contract for a short NVDA call
+        nvda_call_price = 12.75
+        nvda_call_strike = 950.0
+        nvda_call_quantity = -5  # Short 5 contracts
+        nvda_call_value = nvda_call_price * 100 * abs(nvda_call_quantity)
+        
+        nvda_call_contract = Option(
+            symbol="NVDA",
+            lastTradeDateOrContractMonth=next_friday_str,
+            strike=nvda_call_strike,
+            right='C',
+            exchange='SMART',
+            currency='USD'
+        )
+        
+        # Calculate total value including options premium
+        total_value = total_cash + nvda_value + nvda_put_value + nvda_call_value
+        
+        # Create the portfolio object with both stock and option positions
         positions = {
             "NVDA": {
                 'shares': nvda_position,
@@ -629,11 +688,32 @@ class IBConnection:
                 'market_value': nvda_value,
                 'unrealized_pnl': nvda_value - (nvda_price * 0.8 * nvda_position),
                 'realized_pnl': 0,
-                'contract': nvda_contract
+                'contract': nvda_contract,
+                'security_type': 'STK'
+            },
+            f"NVDA_{next_friday_str}_{nvda_put_strike}_P": {
+                'shares': nvda_put_quantity,
+                'avg_cost': nvda_put_price,
+                'market_price': nvda_put_price,
+                'market_value': -nvda_put_value,  # Negative for short positions
+                'unrealized_pnl': 0,
+                'realized_pnl': 0,
+                'contract': nvda_put_contract,
+                'security_type': 'OPT'
+            },
+            f"NVDA_{next_friday_str}_{nvda_call_strike}_C": {
+                'shares': nvda_call_quantity,
+                'avg_cost': nvda_call_price,
+                'market_price': nvda_call_price,
+                'market_value': -nvda_call_value,  # Negative for short positions
+                'unrealized_pnl': 0,
+                'realized_pnl': 0,
+                'contract': nvda_call_contract,
+                'security_type': 'OPT'
             }
         }
         
-        logger.warning("Using MOCK PORTFOLIO DATA - showing 5000 NVDA shares and $1M cash")
+        logger.warning("Using MOCK PORTFOLIO DATA - showing NVDA shares and option positions with $1M cash")
         
         return {
             'account_id': account_id,

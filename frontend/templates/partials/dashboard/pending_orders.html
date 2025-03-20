@@ -47,7 +47,7 @@
     <div class="col-md-12">
         <div class="card shadow-sm">
             <div class="card-header d-flex justify-content-between align-items-center">
-                <h5 class="mb-0">Filled Orders & Weekly Earnings</h5>
+                <h5 class="mb-0">Weekly Option Income (Next Friday Expiration)</h5>
                 <div class="d-flex align-items-center">
                     <button id="refresh-filled-orders" class="btn btn-sm btn-outline-secondary">
                         <i class="bi bi-arrow-clockwise"></i> Refresh
@@ -63,16 +63,16 @@
                                 <th>Type</th>
                                 <th>Strike</th>
                                 <th>Expiration</th>
-                                <th>Fill Price</th>
+                                <th>Avg Price</th>
                                 <th>Quantity</th>
                                 <th>Commission</th>
-                                <th>Net Premium</th>
-                                <th>Filled Date</th>
+                                <th>Total Income</th>
+                                <th>Status</th>
                             </tr>
                         </thead>
                         <tbody id="filled-orders-table">
                             <tr>
-                                <td colspan="9" class="text-center">Loading filled orders...</td>
+                                <td colspan="9" class="text-center">Loading short options expiring next Friday...</td>
                             </tr>
                         </tbody>
                         <tfoot class="table-dark">
@@ -80,15 +80,15 @@
                                 <td colspan="9" class="text-center">
                                     <div class="d-flex justify-content-around align-items-center py-2">
                                         <div class="text-center">
-                                            <h6 class="mb-0">This Week's Earnings</h6>
+                                            <h6 class="mb-0">Weekly Income</h6>
                                             <span class="fs-5 fw-bold" id="weekly-earnings-total">$0.00</span>
                                         </div>
                                         <div class="text-center">
-                                            <h6 class="mb-0">Order Count</h6>
+                                            <h6 class="mb-0">Position Count</h6>
                                             <span class="fs-5 fw-bold" id="weekly-order-count">0</span>
                                         </div>
                                         <div class="text-center">
-                                            <h6 class="mb-0">Average Premium/Order</h6>
+                                            <h6 class="mb-0">Average Income/Position</h6>
                                             <span class="fs-5 fw-bold" id="weekly-average-premium">$0.00</span>
                                         </div>
                                     </div>
@@ -99,7 +99,7 @@
                 </div>
             </div>
             <div class="card-footer">
-                <small class="text-muted">Filled orders from the current week and total earnings summary.</small>
+                <small class="text-muted">Short option positions expiring next Friday and estimated income.</small>
             </div>
         </div>
     </div>

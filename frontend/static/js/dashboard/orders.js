@@ -1,13 +1,13 @@
 /**
  * Orders module for handling pending orders
  */
-import { fetchPendingOrders, cancelOrder, executeOrder, checkOrderStatus } from './api.js';
+import { fetchPendingOrders, cancelOrder, executeOrder, checkOrderStatus, fetchWeeklyOptionIncome } from './api.js';
 import { showAlert, getBadgeColor } from '../utils/alerts.js';
 import { formatCurrency } from './account.js';
 
 // Store orders data
 let pendingOrdersData = [];
-let filledOrdersData = [];
+let weeklyOptionIncomeData = {}; // Changed from filledOrdersData
 
 // Auto-refresh timer
 let autoRefreshTimer = null;
@@ -222,94 +222,83 @@ function updateFilledOrdersTable() {
         return;
     }
     
-    console.log(`Updating filled orders table with ${filledOrdersData.length} orders`);
+    console.log(`Updating weekly option income table with ${weeklyOptionIncomeData.positions ? weeklyOptionIncomeData.positions.length : 0} positions`);
     
     // Clear the table
     filledOrdersTable.innerHTML = '';
     
-    // Note: We're no longer re-filtering from pendingOrdersData here
-    // filledOrdersData is already populated with executed orders from the API
-    
-    if (filledOrdersData.length === 0) {
-        console.log('No filled orders to display');
-        filledOrdersTable.innerHTML = '<tr><td colspan="9" class="text-center">No filled orders found</td></tr>';
+    // Check if we have positions data
+    if (!weeklyOptionIncomeData.positions || weeklyOptionIncomeData.positions.length === 0) {
+        console.log('No weekly option income data to display');
+        filledOrdersTable.innerHTML = '<tr><td colspan="9" class="text-center">No positions expiring next Friday found</td></tr>';
+        
+        // Update summary with zeros
+        updateWeeklyEarningsSummary([], 0);
         return;
     }
     
-    // Filter for executed orders in the current week
-    const weeklyOrders = filledOrdersData.filter(order => {
-        return order.status === 'executed' && isWithinCurrentWeek(order.timestamp || order.created_at);
-    });
+    // Get the positions array and sort by symbol
+    const positions = weeklyOptionIncomeData.positions;
+    positions.sort((a, b) => a.symbol.localeCompare(b.symbol));
     
-    // Calculate total earnings from weekly orders
-    let totalEarnings = 0;
-    
-    // Add each order to the table
-    filledOrdersData.forEach(order => {
+    // Add each position to the table
+    positions.forEach(position => {
         const row = document.createElement('tr');
+        row.className = 'table-success'; // Highlight all rows
         
         // Format the strike price
-        const strike = order.strike ? `$${order.strike}` : 'N/A';
-        
-        // Set quantity or default to 1
-        const quantity = order.quantity || 1;
+        const strike = position.strike ? `$${position.strike}` : 'N/A';
         
         // Calculate premiums
-        const fillPrice = order.avg_fill_price || order.premium || 0;
-        const commission = order.commission || 0;
-        const netPremium = (fillPrice * 100 * quantity) - commission;
+        const fillPrice = position.avg_cost || 0;
+        const income = position.income || 0;
         
-        // Format the premium values
+        // Format values for display
         const fillPriceFormatted = formatCurrency(fillPrice);
-        const commissionFormatted = formatCurrency(commission);
-        const netPremiumFormatted = formatCurrency(netPremium);
+        const incomeFormatted = formatCurrency(income);
         
-        // Format the filled date
-        let filledDate = order.last_updated || order.timestamp || order.created_at;
-        filledDate = formatDate(filledDate);
-        
-        // Highlight weekly orders
-        const rowClass = isWithinCurrentWeek(order.timestamp || order.created_at) ? 'table-success' : '';
-        
-        // Add to weekly earnings if order is from current week
-        if (isWithinCurrentWeek(order.timestamp || order.created_at)) {
-            totalEarnings += netPremium;
-        }
+        // Get option type full name
+        const optionType = position.option_type === 'C' ? 'CALL' : (position.option_type === 'P' ? 'PUT' : position.option_type);
         
         // Create the row HTML
-        row.className = rowClass;
         row.innerHTML = `
-            <td>${order.ticker}</td>
-            <td>${order.option_type}</td>
+            <td>${position.symbol}</td>
+            <td>${optionType}</td>
             <td>${strike}</td>
-            <td>${order.expiration || 'N/A'}</td>
+            <td>${position.expiration || 'N/A'}</td>
             <td>${fillPriceFormatted}</td>
-            <td>${quantity}</td>
-            <td>${commissionFormatted}</td>
-            <td>${netPremiumFormatted}</td>
-            <td>${filledDate}</td>
+            <td>${position.position}</td>
+            <td>-</td>
+            <td>${incomeFormatted}</td>
+            <td>Expires Next Friday</td>
         `;
         
         filledOrdersTable.appendChild(row);
     });
     
-    // Add weekly earnings summary
-    updateWeeklyEarningsSummary(weeklyOrders, totalEarnings);
+    // Update the weekly earnings summary
+    updateWeeklyEarningsSummary(positions, weeklyOptionIncomeData.total_income || 0);
 }
 
 /**
  * Update the weekly earnings summary display
- * @param {Array} weeklyOrders - Array of orders filled this week
- * @param {number} totalEarnings - Total earnings for the week
+ * @param {Array} positions - Array of positions expiring next Friday
+ * @param {number} totalIncome - Total income from these positions
  */
-function updateWeeklyEarningsSummary(weeklyOrders, totalEarnings) {
-    const orderCount = weeklyOrders.length;
-    const averagePremium = orderCount > 0 ? totalEarnings / orderCount : 0;
+function updateWeeklyEarningsSummary(positions, totalIncome) {
+    const positionCount = positions.length;
+    const averageIncome = positionCount > 0 ? totalIncome / positionCount : 0;
     
     // Update the display elements
-    document.getElementById('weekly-earnings-total').textContent = formatCurrency(totalEarnings);
-    document.getElementById('weekly-order-count').textContent = orderCount;
-    document.getElementById('weekly-average-premium').textContent = formatCurrency(averagePremium);
+    document.getElementById('weekly-earnings-total').textContent = formatCurrency(totalIncome);
+    document.getElementById('weekly-order-count').textContent = positionCount;
+    document.getElementById('weekly-average-premium').textContent = formatCurrency(averageIncome);
+    
+    // Add expiration info if available
+    const footerInfo = document.querySelector('.card-footer small.text-muted');
+    if (footerInfo && weeklyOptionIncomeData.next_friday) {
+        footerInfo.textContent = `Short option positions expiring next Friday (${weeklyOptionIncomeData.next_friday}) and estimated income.`;
+    }
 }
 
 /**
@@ -485,25 +474,22 @@ async function loadPendingOrders() {
  */
 async function loadFilledOrders() {
     try {
-        // Fetch executed orders
-        const executedData = await fetchPendingOrders(true);
-        if (executedData && executedData.orders) {
-            console.log(`Received ${executedData.orders.length} executed orders from API`);
+        // Fetch weekly option income data instead of executed orders
+        const incomeData = await fetchWeeklyOptionIncome();
+        if (incomeData) {
+            console.log(`Received weekly option income data: ${incomeData.positions_count} positions`);
             
-            // Filter for orders that are actually executed (not canceled or rejected)
-            filledOrdersData = executedData.orders.filter(order => 
-                order.status === 'executed' && 
-                order.avg_fill_price
-            );
+            // Store the data
+            weeklyOptionIncomeData = incomeData;
             
-            console.log(`Filtered to ${filledOrdersData.length} filled orders with fill price`);
+            // Update the table
             updateFilledOrdersTable();
         } else {
-            console.warn('No executed orders data received from API');
+            console.warn('No weekly option income data received from API');
         }
     } catch (error) {
-        console.error('Error loading filled orders:', error);
-        showAlert('Error loading filled orders', 'danger');
+        console.error('Error loading weekly option income:', error);
+        showAlert(`Error loading weekly income data: ${error.message}`, 'danger');
     }
 }
 

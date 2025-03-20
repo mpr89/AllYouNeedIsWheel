@@ -41,6 +41,29 @@ async function fetchPositions() {
 }
 
 /**
+ * Fetch weekly option income data
+ * @returns {Promise} Promise with weekly income data from short options expiring next Friday
+ */
+async function fetchWeeklyOptionIncome() {
+    try {
+        const response = await fetch('/api/portfolio/weekly-income');
+        if (!response.ok) {
+            throw new Error(`HTTP error ${response.status}`);
+        }
+        return await response.json();
+    } catch (error) {
+        console.error('Error fetching weekly option income:', error);
+        showAlert(`Error fetching weekly income data: ${error.message}`, 'danger');
+        return {
+            positions: [],
+            total_income: 0,
+            positions_count: 0,
+            error: error.message
+        };
+    }
+}
+
+/**
  * Fetch option data for a ticker
  * @param {string} ticker - The stock symbol
  * @param {number} otmPercentage - The OTM percentage value (default: 10)
@@ -223,6 +246,7 @@ async function executeOrder(orderId) {
 export {
     fetchAccountData,
     fetchPositions,
+    fetchWeeklyOptionIncome,
     fetchOptionData,
     fetchTickers,
     fetchPendingOrders,
