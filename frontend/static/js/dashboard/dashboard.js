@@ -2,7 +2,7 @@
  * Main dashboard module
  * Coordinates all dashboard components and initializes the dashboard
  */
-import { loadPortfolioData, loadPositionsTable } from './account.js';
+import { loadPortfolioData } from './account.js';
 import { loadTickers } from './options-table.js';
 import { loadPendingOrders } from './orders.js';
 import { showAlert } from '../utils/alerts.js';
@@ -59,22 +59,9 @@ async function initializeDashboard() {
             }
         }
         
-        // Add event listener for the refresh positions button
-        const refreshPositionsButton = document.getElementById('refresh-positions');
-        if (refreshPositionsButton) {
-            refreshPositionsButton.addEventListener('click', async () => {
-                await Promise.all([
-                    loadPortfolioData(),
-                    loadPositionsTable()
-                ]);
-                showAlert('Positions refreshed successfully', 'success');
-            });
-        }
-        
         // Load all dashboard components in parallel
         await Promise.all([
             loadPortfolioData(),
-            loadPositionsTable(),
             loadTickers(),
             loadPendingOrders(),
             updateWeeklyEarningsSummary()
