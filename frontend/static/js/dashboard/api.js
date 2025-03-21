@@ -42,7 +42,7 @@ async function fetchPositions() {
 
 /**
  * Fetch weekly option income data
- * @returns {Promise} Promise with weekly income data from short options expiring next Friday
+ * @returns {Promise} Promise with weekly income data from short options expiring this coming Friday
  */
 async function fetchWeeklyOptionIncome() {
     try {

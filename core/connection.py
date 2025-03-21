@@ -639,22 +639,22 @@ class IBConnection:
         
         # Create an option contract for a short NVDA put
         from datetime import datetime, timedelta
-        # Calculate next Friday
+        # Calculate this week's Friday
         today = datetime.now()
         days_until_friday = (4 - today.weekday()) % 7
-        if days_until_friday == 0:  # If today is Friday, get next Friday
-            days_until_friday = 7
-        next_friday = today + timedelta(days=days_until_friday)
-        next_friday_str = next_friday.strftime('%Y%m%d')
+        # If today is Friday, use today. Otherwise calculate the upcoming Friday
+        this_friday = today if days_until_friday == 0 else today + timedelta(days=days_until_friday)
+        this_friday_str = this_friday.strftime('%Y%m%d')
         
+        # Premium value is per contract
         nvda_put_price = 15.50
         nvda_put_strike = 850.0
         nvda_put_quantity = -10  # Short 10 contracts
-        nvda_put_value = nvda_put_price * 100 * abs(nvda_put_quantity)
+        nvda_put_value = nvda_put_price * 100 * abs(nvda_put_quantity)  # Market value calculation
         
         nvda_put_contract = Option(
             symbol="NVDA",
-            lastTradeDateOrContractMonth=next_friday_str,
+            lastTradeDateOrContractMonth=this_friday_str,
             strike=nvda_put_strike,
             right='P',
             exchange='SMART',
@@ -662,14 +662,15 @@ class IBConnection:
         )
         
         # Create an option contract for a short NVDA call
+        # Premium value is per contract
         nvda_call_price = 12.75
         nvda_call_strike = 950.0
         nvda_call_quantity = -5  # Short 5 contracts
-        nvda_call_value = nvda_call_price * 100 * abs(nvda_call_quantity)
+        nvda_call_value = nvda_call_price * 100 * abs(nvda_call_quantity)  # Market value calculation
         
         nvda_call_contract = Option(
             symbol="NVDA",
-            lastTradeDateOrContractMonth=next_friday_str,
+            lastTradeDateOrContractMonth=this_friday_str,
             strike=nvda_call_strike,
             right='C',
             exchange='SMART',
@@ -691,7 +692,7 @@ class IBConnection:
                 'contract': nvda_contract,
                 'security_type': 'STK'
             },
-            f"NVDA_{next_friday_str}_{nvda_put_strike}_P": {
+            f"NVDA_{this_friday_str}_{nvda_put_strike}_P": {
                 'shares': nvda_put_quantity,
                 'avg_cost': nvda_put_price,
                 'market_price': nvda_put_price,
@@ -701,7 +702,7 @@ class IBConnection:
                 'contract': nvda_put_contract,
                 'security_type': 'OPT'
             },
-            f"NVDA_{next_friday_str}_{nvda_call_strike}_C": {
+            f"NVDA_{this_friday_str}_{nvda_call_strike}_C": {
                 'shares': nvda_call_quantity,
                 'avg_cost': nvda_call_price,
                 'market_price': nvda_call_price,

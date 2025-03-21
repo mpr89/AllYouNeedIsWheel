@@ -42,10 +42,53 @@ def get_positions():
 @bp.route('/weekly-income', methods=['GET'])
 def get_weekly_income():
     """
-    Get option positions expiring next Friday and calculate potential income
+    Get weekly option income from short options expiring this Friday.
+    
+    Returns:
+        A JSON response containing weekly option income data:
+        {
+            "positions": [
+                {
+                    "symbol": "NVDA",
+                    "option_type": "P", 
+                    "strike": 850.0,
+                    "expiration": "20240510",
+                    "position": 10,
+                    "avg_cost": 15.5,
+                    "current_price": 15.5,
+                    "income": 155.0
+                },
+                ...
+            ],
+            "total_income": 155.0,
+            "positions_count": 1,
+            "this_friday": "20240510"
+        }
+        
+        Error response:
+        {
+            "error": "Error message",
+            "positions": [],
+            "total_income": 0,
+            "positions_count": 0
+        }
     """
     try:
         results = portfolio_service.get_weekly_option_income()
-        return jsonify(results)
+        
+        if 'error' in results:
+            return jsonify({
+                'error': results['error'],
+                'positions': [],
+                'total_income': 0,
+                'positions_count': 0
+            }), 500
+        
+        return jsonify(results), 200
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({
+            'error': str(e),
+            'positions': [],
+            'total_income': 0,
+            'positions_count': 0
+        }), 500

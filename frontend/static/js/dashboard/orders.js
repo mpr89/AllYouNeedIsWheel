@@ -230,7 +230,7 @@ function updateFilledOrdersTable() {
     // Check if we have positions data
     if (!weeklyOptionIncomeData.positions || weeklyOptionIncomeData.positions.length === 0) {
         console.log('No weekly option income data to display');
-        filledOrdersTable.innerHTML = '<tr><td colspan="9" class="text-center">No positions expiring next Friday found</td></tr>';
+        filledOrdersTable.innerHTML = '<tr><td colspan="9" class="text-center">No positions expiring this coming Friday found</td></tr>';
         
         // Update summary with zeros
         updateWeeklyEarningsSummary([], 0);
@@ -282,7 +282,7 @@ function updateFilledOrdersTable() {
 
 /**
  * Update the weekly earnings summary display
- * @param {Array} positions - Array of positions expiring next Friday
+ * @param {Array} positions - Array of positions expiring this coming Friday
  * @param {number} totalIncome - Total income from these positions
  */
 function updateWeeklyEarningsSummary(positions, totalIncome) {
@@ -294,10 +294,10 @@ function updateWeeklyEarningsSummary(positions, totalIncome) {
     document.getElementById('weekly-order-count').textContent = positionCount;
     document.getElementById('weekly-average-premium').textContent = formatCurrency(averageIncome);
     
-    // Add expiration info if available
+    // Add footer info about next Friday expiration date
     const footerInfo = document.querySelector('.card-footer small.text-muted');
-    if (footerInfo && weeklyOptionIncomeData.next_friday) {
-        footerInfo.textContent = `Short option positions expiring next Friday (${weeklyOptionIncomeData.next_friday}) and estimated income.`;
+    if (footerInfo && weeklyOptionIncomeData.this_friday) {
+        footerInfo.textContent = `Short option positions expiring this coming Friday (${weeklyOptionIncomeData.this_friday}) and estimated income.`;
     }
 }
 
