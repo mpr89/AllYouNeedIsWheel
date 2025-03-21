@@ -92,18 +92,20 @@ async function fetchOptionData(ticker, otmPercentage = 10) {
 }
 
 /**
- * Fetch all tickers
+ * Fetch all tickers for stock positions only
  * @returns {Promise} Promise with tickers data
  */
 async function fetchTickers() {
     try {
-        const response = await fetch('/api/portfolio/positions');
+        // Only fetch stock positions by using the type=STK filter
+        const response = await fetch('/api/portfolio/positions?type=STK');
         if (!response.ok) {
             throw new Error(`HTTP error ${response.status}`);
         }
         
         const positionsData = await response.json();
         
+        // Extract unique ticker symbols from stock positions
         const tickers = positionsData.map(position => position.symbol);
         
         return { tickers: tickers };

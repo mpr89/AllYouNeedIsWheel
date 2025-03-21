@@ -42,8 +42,15 @@ function calculateEarningsSummary(tickersData) {
         
         // Process each ticker's option data
         Object.values(tickerData.data.data).forEach(optionData => {
-            // Add portfolio value from stock positions
+            // Get position information (number of shares owned)
             const sharesOwned = optionData.position || 0;
+            
+            // Skip positions with less than 100 shares (minimum for 1 option contract)
+            if (sharesOwned < 100) {
+                return; // Skip this position in earnings calculation
+            }
+            
+            // Add portfolio value from stock positions
             const stockPrice = optionData.stock_price || 0;
             summary.portfolioValue += sharesOwned * stockPrice;
             
@@ -96,7 +103,7 @@ function calculateEarningsSummary(tickersData) {
 }
 
 /**
- * Update options table with data
+ * Update options table with data from stock positions
  */
 function updateOptionsTable() {
     const optionsTable = document.getElementById('options-table');
@@ -109,12 +116,56 @@ function updateOptionsTable() {
     const tickers = Object.keys(tickersData);
     
     if (tickers.length === 0) {
-        optionsTable.innerHTML = '<tr><td colspan="10" class="text-center">No tickers available. Please add tickers first.</td></tr>';
+        optionsTable.innerHTML = '<tr><td colspan="10" class="text-center">No stock positions available. Please add stock positions first.</td></tr>';
         return;
     }
     
-    // Process each ticker
-    tickers.forEach(ticker => {
+    console.log("Found ticker data for:", tickers.join(", "));
+    
+    // Keep track of tickers with sufficient shares
+    let sufficientSharesCount = 0;
+    let insufficientSharesCount = 0;
+    let filteredTickers = [];
+    let visibleTickers = [];
+    
+    // First pass: Pre-filter tickers with insufficient shares
+    const eligibleTickers = tickers.filter(ticker => {
+        const tickerData = tickersData[ticker];
+        
+        // Skip tickers without data
+        if (!tickerData || !tickerData.data || !tickerData.data.data || !tickerData.data.data[ticker]) {
+            return true; // Keep to show "No data available" message
+        }
+        
+        // Check shares
+        const optionData = tickerData.data.data[ticker];
+        const sharesOwned = optionData.position || 0;
+        
+        console.log(`Ticker ${ticker} has ${sharesOwned} shares`);
+        
+        // Filter out positions with less than 100 shares
+        if (sharesOwned < 100) {
+            filteredTickers.push(ticker);
+            insufficientSharesCount++;
+            return false; // Remove this ticker
+        }
+        
+        visibleTickers.push(ticker);
+        sufficientSharesCount++;
+        return true; // Keep this ticker
+    });
+    
+    console.log("Filtered out tickers:", filteredTickers.join(", "));
+    console.log("Visible tickers:", visibleTickers.join(", "));
+    
+    // If we have no positions with sufficient shares after filtering
+    if (visibleTickers.length === 0) {
+        optionsTable.innerHTML = '<tr><td colspan="10" class="text-center">No stock positions with at least 100 shares found. You need at least 100 shares to sell a covered call.</td></tr>';
+        return;
+    }
+    
+    // Process each eligible ticker
+    eligibleTickers.forEach(ticker => {
         const tickerData = tickersData[ticker];
         
         if (!tickerData || !tickerData.data || !tickerData.data.data || !tickerData.data.data[ticker]) {
@@ -141,6 +192,12 @@ function updateOptionsTable() {
         
         // Get position information (number of shares owned)
         const sharesOwned = optionData.position || 0;
+        
+        // Double-check shares again (shouldn't be needed due to pre-filtering, but just to be safe)
+        if (sharesOwned < 100) {
+            console.warn(`Ticker ${ticker} with ${sharesOwned} shares slipped through filtering!`);
+            return; // Skip this ticker
+        }
         
         // Get call option data
         let callOption = null;
@@ -216,11 +273,16 @@ function updateOptionsTable() {
             `${formatCurrency(putOption.ask)} x${maxPutContracts} ${formatCurrency(totalPutPremium)}` : 
             'N/A';
         
+        // Show share count with a highlight if it's exactly enough for options
+        const shareDisplay = sharesOwned === 100 ? 
+            `<span class="text-success fw-bold">${sharesOwned} shares</span>` : 
+            `${sharesOwned} shares`;
+        
         // Build the row HTML with OTM slider control
         row.innerHTML = `
             <td>${ticker}</td>
             <td>${formatCurrency(stockPrice)}</td>
-            <td>${sharesOwned} shares</td>
+            <td>${shareDisplay}</td>
             <td>
                 <div class="input-group input-group-sm" style="width: 120px;">
                     <input type="range" class="form-range otm-slider" id="otm-${ticker}" 
@@ -249,6 +311,19 @@ function updateOptionsTable() {
         // Add the row to the table
         optionsTable.appendChild(row);
     });
+    
+    // Add a message about filtered positions if any were filtered out
+    if (insufficientSharesCount > 0) {
+        const noticeRow = document.createElement('tr');
+        noticeRow.className = 'table-warning';
+        noticeRow.innerHTML = `
+            <td colspan="10" class="text-center">
+                <small><i class="bi bi-info-circle"></i> ${insufficientSharesCount} position(s) with fewer than 100 shares have been hidden (${filteredTickers.join(', ')}), as they cannot be used for covered calls.</small>
+            </td>
+        `;
+        // Insert at the top of the table
+        optionsTable.insertBefore(noticeRow, optionsTable.firstChild);
+    }
     
     // Add earnings summary section after the table
     const summaryData = calculateEarningsSummary(tickersData);
