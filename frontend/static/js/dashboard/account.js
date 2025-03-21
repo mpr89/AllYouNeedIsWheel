@@ -84,27 +84,139 @@ function populatePositionsTable() {
         return;
     }
     
-    // Add positions to table
-    positionsData.forEach(position => {
-        const row = document.createElement('tr');
-        
-        const marketValue = position.market_value || 0;
-        const unrealizedPnL = position.unrealized_pnl || 0;
-        const unrealizedPnLPercent = position.unrealized_pnl_percent || 0;
-        
-        const pnlClass = unrealizedPnL >= 0 ? 'text-success' : 'text-danger';
-        
-        row.innerHTML = `
-            <td>${position.symbol}</td>
-            <td>${position.position}</td>
-            <td>${formatCurrency(position.average_cost || 0)}</td>
-            <td>${formatCurrency(position.market_price || 0)}</td>
-            <td>${formatCurrency(marketValue)}</td>
-            <td class="${pnlClass}">${formatCurrency(unrealizedPnL)} (${formatPercentage(unrealizedPnLPercent)})</td>
+    // Debug log to see what data we're working with
+    console.log('Position data received:', positionsData);
+    
+    // Filter positions by security_type
+    const stockPositions = positionsData.filter(position => 
+        position.security_type === 'STK' || position.securityType === 'STK' || position.sec_type === 'STK');
+    
+    const optionPositions = positionsData.filter(position => 
+        position.security_type === 'OPT' || position.securityType === 'OPT' || position.sec_type === 'OPT');
+    
+    console.log('Stock positions identified:', stockPositions.length);
+    console.log('Option positions identified:', optionPositions.length);
+    
+    // First, add stock positions with a header
+    if (stockPositions.length > 0) {
+        // Add a header row for stock positions
+        const stockHeader = document.createElement('tr');
+        stockHeader.className = 'table-primary';
+        stockHeader.innerHTML = `
+            <td colspan="6" class="fw-bold">Stock Positions (${stockPositions.length})</td>
         `;
+        positionsTableBody.appendChild(stockHeader);
         
-        positionsTableBody.appendChild(row);
-    });
+        // Add stock positions
+        stockPositions.forEach(position => {
+            const row = document.createElement('tr');
+            
+            const marketValue = position.market_value || 0;
+            const unrealizedPnL = position.unrealized_pnl || 0;
+            const unrealizedPnLPercent = position.unrealized_pnl_percent || 0;
+            
+            const pnlClass = unrealizedPnL >= 0 ? 'text-success' : 'text-danger';
+            
+            row.innerHTML = `
+                <td>${position.symbol}</td>
+                <td>${position.position}</td>
+                <td>${formatCurrency(position.average_cost || 0)}</td>
+                <td>${formatCurrency(position.market_price || 0)}</td>
+                <td>${formatCurrency(marketValue)}</td>
+                <td class="${pnlClass}">${formatCurrency(unrealizedPnL)} (${formatPercentage(unrealizedPnLPercent)})</td>
+            `;
+            
+            positionsTableBody.appendChild(row);
+        });
+    }
+    
+    // Then, add option positions with a header
+    if (optionPositions.length > 0) {
+        // Add a header row for option positions
+        const optionHeader = document.createElement('tr');
+        optionHeader.className = 'table-info';
+        optionHeader.innerHTML = `
+            <td colspan="6" class="fw-bold">Option Positions (${optionPositions.length})</td>
+        `;
+        positionsTableBody.appendChild(optionHeader);
+        
+        // Add option positions
+        optionPositions.forEach(position => {
+            const row = document.createElement('tr');
+            
+            const marketValue = position.market_value || 0;
+            const unrealizedPnL = position.unrealized_pnl || 0;
+            const unrealizedPnLPercent = position.unrealized_pnl_percent || 0;
+            
+            // For options, show contract details in symbol (expiration, strike, etc.)
+            let symbolDisplay = position.symbol;
+            if (position.contract && position.contract.right) {
+                const right = position.contract.right; // P for Put, C for Call
+                const strike = position.contract.strike || 0;
+                const expiry = position.contract.lastTradeDateOrContractMonth || '';
+                
+                symbolDisplay = `${position.symbol} ${expiry} ${strike} ${right === 'P' ? 'Put' : 'Call'}`;
+            }
+            
+            const pnlClass = unrealizedPnL >= 0 ? 'text-success' : 'text-danger';
+            
+            row.innerHTML = `
+                <td>${symbolDisplay}</td>
+                <td>${position.position}</td>
+                <td>${formatCurrency(position.average_cost || 0)}</td>
+                <td>${formatCurrency(position.market_price || 0)}</td>
+                <td>${formatCurrency(marketValue)}</td>
+                <td class="${pnlClass}">${formatCurrency(unrealizedPnL)} (${formatPercentage(unrealizedPnLPercent)})</td>
+            `;
+            
+            positionsTableBody.appendChild(row);
+        });
+    }
+    
+    // If no stocks or options were identified but we have positions data,
+    // show all positions as unclassified
+    if (stockPositions.length === 0 && optionPositions.length === 0 && positionsData.length > 0) {
+        const fallbackHeader = document.createElement('tr');
+        fallbackHeader.className = 'table-warning';
+        fallbackHeader.innerHTML = `
+            <td colspan="6" class="fw-bold">All Positions (${positionsData.length})</td>
+        `;
+        positionsTableBody.appendChild(fallbackHeader);
+        
+        // Show all positions without categorization
+        positionsData.forEach(position => {
+            const row = document.createElement('tr');
+            
+            // Try to display full option info if it looks like an option
+            let symbolDisplay = position.symbol;
+            if (position.contract && position.contract.right) {
+                const right = position.contract.right;
+                const strike = position.contract.strike || 0;
+                const expiry = position.contract.lastTradeDateOrContractMonth || '';
+                symbolDisplay = `${position.symbol} ${expiry} ${strike} ${right === 'P' ? 'Put' : 'Call'}`;
+            }
+            
+            const marketValue = position.market_value || 0;
+            const unrealizedPnL = position.unrealized_pnl || 0;
+            const unrealizedPnLPercent = position.unrealized_pnl_percent || 0;
+            
+            const pnlClass = unrealizedPnL >= 0 ? 'text-success' : 'text-danger';
+            
+            row.innerHTML = `
+                <td>${symbolDisplay}</td>
+                <td>${position.position}</td>
+                <td>${formatCurrency(position.average_cost || 0)}</td>
+                <td>${formatCurrency(position.market_price || 0)}</td>
+                <td>${formatCurrency(marketValue)}</td>
+                <td class="${pnlClass}">${formatCurrency(unrealizedPnL)} (${formatPercentage(unrealizedPnLPercent)})</td>
+            `;
+            
+            positionsTableBody.appendChild(row);
+        });
+    }
+    
+    // Remove the "no positions found" notices since they're not needed
+    // with our new fallback display for unclassified positions
 }
 
 /**
