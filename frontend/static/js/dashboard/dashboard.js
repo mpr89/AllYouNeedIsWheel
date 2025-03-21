@@ -6,6 +6,41 @@ import { loadPortfolioData, loadPositionsTable } from './account.js';
 import { loadTickers } from './options-table.js';
 import { loadPendingOrders } from './orders.js';
 import { showAlert } from '../utils/alerts.js';
+import { fetchWeeklyOptionIncome } from './api.js';
+import { formatCurrency } from './account.js';
+
+// Store weekly income data
+let weeklyIncomeData = null;
+
+/**
+ * Update the weekly earnings summary card
+ */
+async function updateWeeklyEarningsSummary() {
+    try {
+        const data = await fetchWeeklyOptionIncome();
+        weeklyIncomeData = data;
+        
+        // Update the weekly income summary card
+        const weeklyIncomeSummary = document.getElementById('weekly-income-summary');
+        if (weeklyIncomeSummary) {
+            weeklyIncomeSummary.textContent = formatCurrency(data.total_income || 0);
+        }
+        
+        // Update the count of positions expiring this Friday
+        const weeklyPositionsCount = document.getElementById('weekly-positions-count');
+        if (weeklyPositionsCount) {
+            weeklyPositionsCount.textContent = data.positions_count || 0;
+        }
+        
+        // Update the Friday date if available
+        const fridayDate = document.getElementById('friday-date');
+        if (fridayDate && data.this_friday) {
+            fridayDate.textContent = data.this_friday;
+        }
+    } catch (error) {
+        console.error('Error updating weekly earnings summary:', error);
+    }
+}
 
 /**
  * Initialize the dashboard
@@ -41,7 +76,8 @@ async function initializeDashboard() {
             loadPortfolioData(),
             loadPositionsTable(),
             loadTickers(),
-            loadPendingOrders()
+            loadPendingOrders(),
+            updateWeeklyEarningsSummary()
         ]);
         
         console.log('Dashboard initialization complete');
