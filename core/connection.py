@@ -554,7 +554,6 @@ class IBConnection:
                 logger.info(f"Error getting portfolio during closed market. Using mock portfolio data.")
                 return self._generate_mock_portfolio()
           
-    def _generate_mock_stock_data(self, symbol):
         """
         Generate mock stock data when real and historical data are unavailable
         
@@ -612,6 +611,7 @@ class IBConnection:
                 'timestamp': datetime.now().isoformat(),
                 'is_mock': True
             }
+    
     def _generate_mock_portfolio(self):
         """
         Generate a mock portfolio with stock and option positions and $1M cash
@@ -743,116 +743,6 @@ class IBConnection:
         
         current_time = now.time()
         return market_open <= current_time <= market_close
-
-    def get_stock_data(self, symbol):
-        """
-        Get comprehensive stock data including price, volume, and other metrics
-        
-        Args:
-            symbol (str): Stock symbol
-            
-        Returns:
-            dict: Dictionary with stock data or None if error
-            
-        Raises:
-            ConnectionError: If connection fails during market hours
-            ValueError: If no data available during market hours
-        """
-        is_market_open = self._is_market_hours()
-        
-        if not self.is_connected():
-            if is_market_open:
-                logger.error("Not connected to IB during market hours")
-                raise ConnectionError("Not connected to IB during market hours")
-            else:
-                logger.info("Market is closed. Using mock data.")
-                return self._generate_mock_stock_data(symbol)
-        
-        try:
-            # Ensure event loop exists for this thread
-            self._ensure_event_loop()
-            
-            # Create contract for the stock
-            contract = Stock(symbol, 'SMART', 'USD')
-            
-            # Try to get ticker data
-            tickers = self.ib.reqTickers(contract)
-            
-            if not tickers:
-                if is_market_open:
-                    raise ValueError(f"No ticker data available for {symbol} during market hours")
-                else:
-                    logger.info(f"No ticker data for {symbol} during closed market. Using mock data.")
-                    return self._generate_mock_stock_data(symbol)
-            
-            # Get the latest ticker data
-            ticker_data = tickers[0]
-            
-            # Extract relevant data from the ticker
-            last_price = ticker_data.last if ticker_data.last else ticker_data.close
-            bid_price = ticker_data.bid if ticker_data.bid else ticker_data.close
-            ask_price = ticker_data.ask if ticker_data.ask else ticker_data.close
-            volume = ticker_data.volume if ticker_data.volume else 0
-            high = ticker_data.high if ticker_data.high else last_price
-            low = ticker_data.low if ticker_data.low else last_price
-            open_price = ticker_data.open if ticker_data.open else last_price
-            close_price = ticker_data.close if ticker_data.close else last_price
-            
-            # During market hours, we want real data only
-            if is_market_open and (last_price is None or bid_price is None or ask_price is None):
-                raise ValueError(f"Incomplete market data for {symbol} during market hours")
-            
-            # Build and return the result
-            result = {
-                'symbol': symbol,
-                'last': last_price,
-                'bid': bid_price,
-                'ask': ask_price,
-                'high': high,
-                'low': low,
-                'close': close_price,
-                'open': open_price,
-                'volume': volume,
-                'halted': ticker_data.halted if hasattr(ticker_data, 'halted') else False,
-                'timestamp': ticker_data.date.isoformat() if hasattr(ticker_data, 'date') else datetime.now().isoformat(),
-                'is_historical': False,
-                'is_mock': False
-            }
-            
-            return result
-        
-        except Exception as e:
-            if is_market_open:
-                # During market hours, let errors propagate
-                logger.error(f"Error getting stock data for {symbol} during market hours: {str(e)}")
-                raise
-            else:
-                # Outside market hours, fall back to mock data
-                logger.info(f"Error getting stock data for {symbol} during closed market. Using mock data.")
-                return self._generate_mock_stock_data(symbol)
-     
-    def _adjust_to_standard_strike(self, strike):
-        """
-        Adjust a strike price to a standard option strike increment
-        
-        Args:
-            strike: Strike price
-            
-        Returns:
-            float: Adjusted strike price
-        """
-        if strike <= 5:
-            # $0.50 increments for stocks under $5
-            return round(strike * 2) / 2
-        elif strike <= 25:
-            # $1.00 increments for stocks under $25
-            return round(strike)
-        elif strike <= 200:
-            # $5.00 increments for stocks under $200
-            return round(strike / 5) * 5
-        else:
-            # $10.00 increments for stocks over $200
-            return round(strike / 10) * 10
 
     def create_option_contract(self, symbol, expiry, strike, option_type, exchange='SMART', currency='USD'):
         """

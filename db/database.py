@@ -100,52 +100,6 @@ class OptionsDatabase:
         conn.commit()
         conn.close()
     
-    def save_recommendation(self, recommendation):
-        """
-        Save an option recommendation to the database
-        
-        Args:
-            recommendation (dict): Option recommendation data
-            
-        Returns:
-            int: ID of the inserted record
-        """
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            # Extract data from recommendation
-            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            ticker = recommendation.get('ticker', '')
-            option_type = recommendation.get('type', '')
-            action = recommendation.get('action', '')
-            strike = recommendation.get('strike', 0)
-            expiration = recommendation.get('expiration', '')
-            
-            # Get premium if available
-            premium = 0
-            if 'earnings' in recommendation and recommendation['earnings']:
-                premium = recommendation['earnings'].get('premium_per_contract', 0)
-                
-            # Convert recommendation to JSON for details
-            details = json.dumps(recommendation)
-            
-            # Insert into database
-            cursor.execute('''
-                INSERT INTO recommendations 
-                (timestamp, ticker, option_type, action, strike, expiration, premium, details)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (timestamp, ticker, option_type, action, strike, expiration, premium, details))
-            
-            record_id = cursor.lastrowid
-            conn.commit()
-            conn.close()
-            
-            return record_id
-        except Exception as e:
-            print(f"Error saving recommendation: {str(e)}")
-            return None
-    
     def save_order(self, order_data):
         """
         Save an option order to the database using flattened structure

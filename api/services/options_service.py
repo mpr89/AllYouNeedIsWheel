@@ -381,27 +381,20 @@ class OptionsService:
                 bid = float(order.get('bid', 0))
                 ask = float(order.get('ask', 0))
                 
-                print(f"Bid: {bid}, Ask: {ask}")  # Debug output
-                
                 # Calculate appropriate limit price
                 if bid > 0 and ask > 0:
                     limit_price = (bid + ask) / 2
-                    print(f"Using midpoint price: {limit_price}")
                 elif bid > 0:
                     limit_price = bid
-                    print(f"Using bid price: {limit_price}")
                 elif ask > 0:
                     limit_price = ask
-                    print(f"Using ask price: {limit_price}")
                 else:
                     # Try premium as fallback
                     premium = float(order.get('premium', 0))
                     if premium > 0:
                         limit_price = premium
-                        print(f"Using premium price: {limit_price}")
                     else:
                         limit_price = 0.05
-                        print("Using minimum price of 0.05")
                     
                 # Ensure minimum price and round properly
                 if limit_price < 0.01:
@@ -412,7 +405,7 @@ class OptionsService:
                 logger.warning(f"Error calculating limit price: {e}. Using default.")
                 limit_price = 0.05
             
-            print(f"Final limit price: {limit_price}")
+            logger.debug(f"Final limit price: {limit_price}")
             
             # Create contract
             contract = conn.create_option_contract(
@@ -436,8 +429,7 @@ class OptionsService:
                 order_type=order_type,
                 limit_price=limit_price
             )
-            print(f"Order details: {order}")
-            print(f"Created IB order: {ib_order}")
+            logger.debug(f"Created IB order: {ib_order}")
             if not ib_order:
                 conn.disconnect()
                 return {
@@ -504,6 +496,16 @@ class OptionsService:
             }, 500
       
     def get_otm_options(self, ticker=None, otm_percentage=10):
+        """
+        Get out-of-the-money options based on percentage
+        
+        Args:
+            ticker (str, optional): Stock ticker symbol
+            otm_percentage (int, optional): Percentage out of the money
+            
+        Returns:
+            dict: Options data for the requested ticker
+        """
         start_time = time.time()
         
         # Use _ensure_connection instead of creating a new connection each time
@@ -534,11 +536,23 @@ class OptionsService:
         elapsed = time.time() - start_time
         logger.info(f"Completed OTM-based options request in {elapsed:.2f}s, is_market_open={is_market_open}")
         
-        # Ensure OTM percentage is included in the result
+        # Return the results
         return {'data': result}
         
     def _process_ticker_for_otm(self, conn, ticker, otm_percentage, expiration=None, is_market_open=None):
-        """Process a single ticker for OTM options"""
+        """
+        Process a single ticker for OTM options
+        
+        Args:
+            conn: IB connection
+            ticker (str): Stock ticker symbol
+            otm_percentage (float): Percentage out of the money
+            expiration (str, optional): Expiration date in YYYYMMDD format
+            is_market_open (bool, optional): Whether the market is currently open
+            
+        Returns:
+            dict: Processed options data for the ticker
+        """
         logger.info(f"Processing {ticker} for {otm_percentage}% OTM options")
         result = {}
         
@@ -890,9 +904,9 @@ class OptionsService:
                 )
                 logger.info(f"Found {len(orders)} pending/processing orders to check")
                 
-                # Debug: Print details of each order found
+                # Log details of each order at debug level
                 for i, order in enumerate(orders):
-                    logger.info(f"Order {i+1}: ID={order.get('id')}, Status={order.get('status')}, " +
+                    logger.debug(f"Order {i+1}: ID={order.get('id')}, Status={order.get('status')}, " +
                                 f"Executed={order.get('executed')}, IB ID={order.get('ib_order_id', 'None')}")
                     
             except Exception as db_error:
