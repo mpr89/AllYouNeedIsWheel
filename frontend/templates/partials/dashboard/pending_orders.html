@@ -103,4 +103,15 @@
             </div>
         </div>
     </div>
-</div> 
+</div>
+
+<!-- Include confirmation modal for order execution -->
+{% with 
+  modal_id="confirmOrderModal",
+  title="Confirm Order Execution",
+  body="Are you sure you want to execute this order?",
+  confirm_button_text="Execute Order",
+  confirm_button_class="btn-success"
+%}
+  {% include "partials/components/confirm_modal.html" %}
+{% endwith %} 

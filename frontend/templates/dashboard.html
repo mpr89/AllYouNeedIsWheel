@@ -8,15 +8,17 @@
 {% endblock %}
 
 {% block content %}
-<div class="row mb-4">
-    <div class="col-md-12">
-        <h1>Dashboard</h1>
-        <p class="lead">Overview of your portfolio and trading activity</p>
-    </div>
-</div>
+<!-- Include page header -->
+{% with 
+  title="Dashboard",
+  subtitle="Overview of your portfolio and trading activity"
+%}
+  {% include "partials/components/page_header.html" %}
+{% endwith %}
 
 <!-- Include modular template sections -->
 {% include "partials/dashboard/account_summary.html" %}
+{% include "partials/common/positions_table.html" %}
 {% include "partials/dashboard/options_table.html" %}
 {% include "partials/dashboard/pending_orders.html" %}
 

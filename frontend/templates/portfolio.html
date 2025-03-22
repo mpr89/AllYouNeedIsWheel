@@ -8,15 +8,18 @@
 {% endblock %}
 
 {% block content %}
-<div class="row mb-4">
-    <div class="col-md-12">
-        <h1>Portfolio</h1>
-        <p class="lead">View and manage your positions</p>
-    </div>
-</div>
+<!-- Include page header with action button -->
+{% with 
+  title="Portfolio",
+  subtitle="View and manage your positions",
+  show_actions=true,
+  action_buttons='<button class="btn btn-outline-primary" id="refresh-portfolio"><i class="bi bi-arrow-repeat"></i> Refresh</button>'
+%}
+  {% include "partials/components/page_header.html" %}
+{% endwith %}
 
-<!-- Include positions table only -->
-{% include "partials/dashboard/positions_table.html" %}
+<!-- Include positions table from common partials -->
+{% include "partials/common/positions_table.html" %}
 
 {% endblock %}
 
