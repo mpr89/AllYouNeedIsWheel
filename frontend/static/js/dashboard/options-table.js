@@ -361,12 +361,10 @@ function updateOptionsTable() {
             `${formatCurrency(putOption.ask)} x${putQuantity} ${formatCurrency(totalPutPremium)}` : 
             'N/A';
         
-        // Show share count with a highlight if it's exactly enough for options
-        const shareDisplay = sharesOwned === 100 ? 
-            `<span class="text-success fw-bold">${sharesOwned} shares</span>` : 
-            `${sharesOwned} shares`;
+        // Show share count without highlight regardless of the amount
+        const shareDisplay = `${sharesOwned} shares`;
         
-        // Create the put quantity input field with recommendation tooltip
+        // Create the put quantity input field without the recommendation button
         const putQtyInputField = `
             <div class="input-group input-group-sm" style="width: 120px;">
                 <button class="btn btn-sm btn-outline-secondary decrement-put-qty" data-ticker="${ticker}">-</button>
@@ -374,12 +372,6 @@ function updateOptionsTable() {
                        value="${putQuantity}" data-ticker="${ticker}" data-recommended="${recommendedPutQty}"
                        ${putOption ? '' : 'disabled'}>
                 <button class="btn btn-sm btn-outline-secondary increment-put-qty" data-ticker="${ticker}">+</button>
-                ${recommendedPutQty > 0 ? 
-                  `<button class="btn btn-sm btn-outline-info ms-1 set-recommended" 
-                          data-ticker="${ticker}" data-value="${recommendedPutQty}"
-                          title="Set to recommended quantity (${recommendedPutQty})">
-                      <i class="bi bi-magic"></i>
-                   </button>` : ''}
             </div>
         `;
         
@@ -585,22 +577,6 @@ function addOptionsTableEventListeners() {
                 
                 // Recalculate earnings and update table
                 updateOptionsTable();
-            }
-        });
-    });
-    
-    // Add listeners to set recommended quantity buttons
-    document.querySelectorAll('.set-recommended').forEach(button => {
-        button.addEventListener('click', function() {
-            const ticker = this.getAttribute('data-ticker');
-            const recommendedValue = parseInt(this.getAttribute('data-value')) || 0;
-            const inputElement = document.querySelector(`.put-qty-input[data-ticker="${ticker}"]`);
-            
-            if (inputElement && recommendedValue > 0) {
-                inputElement.value = recommendedValue;
-                // Trigger change event
-                const event = new Event('change');
-                inputElement.dispatchEvent(event);
             }
         });
     });
