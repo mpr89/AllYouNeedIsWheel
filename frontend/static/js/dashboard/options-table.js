@@ -1,12 +1,14 @@
 /**
  * Options Table module for handling options display and interaction
  */
-import { fetchOptionData, fetchTickers, saveOptionOrder } from './api.js';
+import { fetchOptionData, fetchTickers, saveOptionOrder, fetchAccountData } from './api.js';
 import { showAlert } from '../utils/alerts.js';
 import { formatCurrency, formatPercentage } from './account.js';
 
 // Store options data
 let tickersData = {};
+// Store portfolio summary data
+let portfolioSummary = null;
 
 /**
  * Calculate the Out of The Money percentage
@@ -22,6 +24,53 @@ function calculateOTMPercentage(strikePrice, currentPrice) {
 }
 
 /**
+ * Calculate recommended put options quantity based on portfolio data
+ * @param {number} stockPrice - Current stock price
+ * @param {number} putStrike - Put option strike price
+ * @param {string} ticker - The ticker symbol
+ * @returns {Object} Recommended quantity and explanation
+ */
+function calculateRecommendedPutQuantity(stockPrice, putStrike, ticker) {
+    // Default recommendation if we can't calculate
+    const defaultRecommendation = {
+        quantity: 1,
+        explanation: "Default recommendation"
+    };
+    
+    // If we don't have portfolio data, return default
+    if (!portfolioSummary || !stockPrice || !putStrike) {
+        return defaultRecommendation;
+    }
+    
+    try {
+        // Get cash balance and total portfolio value
+        const cashBalance = portfolioSummary.cash_balance || 0;
+        const totalPortfolioValue = portfolioSummary.account_value || 0;
+        
+        // Get number of unique tickers (for diversification)
+        const totalStocks = Object.keys(tickersData).length || 1;
+        
+        // Calculate maximum allocation per stock (200% of cash balance / number of stocks)
+        const maxAllocationPerStock = (2.0 * cashBalance) / totalStocks;
+        
+        // Calculate how many contracts that would allow (each contract = 100 shares)
+        const potentialContracts = Math.floor(maxAllocationPerStock / (putStrike * 100));
+        
+        // Limit to a reasonable number based on portfolio size
+        const maxContracts = Math.min(potentialContracts, 10);
+        const recommendedQuantity = Math.max(1, maxContracts);
+        
+        return {
+            quantity: recommendedQuantity,
+            explanation: `Based on cash: ${formatCurrency(cashBalance)}, diversification across ${totalStocks} stocks`
+        };
+    } catch (error) {
+        console.error("Error calculating recommended put quantity:", error);
+        return defaultRecommendation;
+    }
+}
+
+/**
  * Calculate earnings summary for all options
  * @param {Object} tickersData - The data for all tickers
  * @returns {Object} Summary of earnings
@@ -33,7 +82,9 @@ function calculateEarningsSummary(tickersData) {
         totalWeeklyPremium: 0,
         portfolioValue: 0, // Will be calculated from position value
         projectedAnnualEarnings: 0,
-        projectedAnnualReturn: 0
+        projectedAnnualReturn: 0,
+        totalPutExerciseCost: 0, // NEW: Total cost if all puts are exercised
+        cashBalance: portfolioSummary ? portfolioSummary.cash_balance || 0 : 0
     };
     
     // Process each ticker to get total premium earnings
@@ -81,9 +132,15 @@ function calculateEarningsSummary(tickersData) {
             
             if (putOption && putOption.ask) {
                 const putPremiumPerContract = putOption.ask * 100;
-                const maxPutContracts = Math.floor(sharesOwned / 100);
-                const totalPutPremium = putPremiumPerContract * maxPutContracts;
+                // Use custom put quantity if available
+                const ticker = optionData.symbol || Object.keys(tickerData.data.data)[0];
+                const customPutQuantity = tickerData.putQuantity || Math.floor(sharesOwned / 100);
+                const totalPutPremium = putPremiumPerContract * customPutQuantity;
                 summary.totalWeeklyPutPremium += totalPutPremium;
+                
+                // Calculate total exercise cost
+                const putExerciseCost = putOption.strike * customPutQuantity * 100;
+                summary.totalPutExerciseCost += putExerciseCost;
             }
         });
     });
@@ -116,7 +173,7 @@ function updateOptionsTable() {
     const tickers = Object.keys(tickersData);
     
     if (tickers.length === 0) {
-        optionsTable.innerHTML = '<tr><td colspan="10" class="text-center">No stock positions available. Please add stock positions first.</td></tr>';
+        optionsTable.innerHTML = '<tr><td colspan="13" class="text-center">No stock positions available. Please add stock positions first.</td></tr>';
         return;
     }
     
@@ -160,7 +217,7 @@ function updateOptionsTable() {
     
     // If we have no positions with sufficient shares after filtering
     if (visibleTickers.length === 0) {
-        optionsTable.innerHTML = '<tr><td colspan="10" class="text-center">No stock positions with at least 100 shares found. You need at least 100 shares to sell a covered call.</td></tr>';
+        optionsTable.innerHTML = '<tr><td colspan="13" class="text-center">No stock positions with at least 100 shares found. You need at least 100 shares to sell a covered call.</td></tr>';
         return;
     }
     
@@ -173,7 +230,7 @@ function updateOptionsTable() {
             const row = document.createElement('tr');
             row.innerHTML = `
                 <td>${ticker}</td>
-                <td colspan="8">No data available</td>
+                <td colspan="11">No data available</td>
                 <td>
                     <button class="btn btn-sm btn-outline-primary refresh-options" data-ticker="${ticker}">
                         <i class="bi bi-arrow-repeat"></i> Refresh
@@ -260,9 +317,40 @@ function updateOptionsTable() {
         // Calculate put premium (cash secured puts)
         const putAskPrice = putOption && putOption.ask ? putOption.ask : 0;
         const putPremiumPerContract = putAskPrice * 100;
-        // Assuming one put contract per 100 shares equivalent of cash
-        const maxPutContracts = Math.floor(sharesOwned / 100);
-        const totalPutPremium = putPremiumPerContract * maxPutContracts;
+        
+        // Get the current custom put quantity if available, or calculate recommended quantity
+        let putQuantity = tickerData.putQuantity || 0;
+        let recommendedPutQty = 0;
+        
+        if (putOption) {
+            // Get recommendation if no custom quantity set
+            if (!putQuantity) {
+                const recommendation = calculateRecommendedPutQuantity(stockPrice, putOption.strike, ticker);
+                recommendedPutQty = recommendation.quantity;
+                putQuantity = recommendedPutQty;
+                tickerData.putQuantity = putQuantity; // Store the recommendation
+            }
+        } else {
+            // No put option available
+            putQuantity = 0;
+            recommendedPutQty = 0;
+        }
+        
+        // Calculate total premium based on put quantity
+        const totalPutPremium = putPremiumPerContract * putQuantity;
+        
+        // Calculate exercise cost and portfolio impact for put options
+        let exerciseCost = 0;
+        let portfolioImpact = 0;
+        
+        if (putOption && putQuantity > 0) {
+            exerciseCost = putOption.strike * putQuantity * 100;
+            
+            // Calculate portfolio impact
+            if (portfolioSummary && portfolioSummary.account_value > 0) {
+                portfolioImpact = (exerciseCost / portfolioSummary.account_value) * 100;
+            }
+        }
         
         // Format the premium prices with estimated earnings
         const callPremium = callOption && callOption.ask ? 
@@ -270,13 +358,39 @@ function updateOptionsTable() {
             'N/A';
         
         const putPremium = putOption && putOption.ask ? 
-            `${formatCurrency(putOption.ask)} x${maxPutContracts} ${formatCurrency(totalPutPremium)}` : 
+            `${formatCurrency(putOption.ask)} x${putQuantity} ${formatCurrency(totalPutPremium)}` : 
             'N/A';
         
         // Show share count with a highlight if it's exactly enough for options
         const shareDisplay = sharesOwned === 100 ? 
             `<span class="text-success fw-bold">${sharesOwned} shares</span>` : 
             `${sharesOwned} shares`;
+        
+        // Create the put quantity input field with recommendation tooltip
+        const putQtyInputField = `
+            <div class="input-group input-group-sm" style="width: 120px;">
+                <button class="btn btn-sm btn-outline-secondary decrement-put-qty" data-ticker="${ticker}">-</button>
+                <input type="number" min="0" class="form-control form-control-sm text-center put-qty-input" 
+                       value="${putQuantity}" data-ticker="${ticker}" data-recommended="${recommendedPutQty}"
+                       ${putOption ? '' : 'disabled'}>
+                <button class="btn btn-sm btn-outline-secondary increment-put-qty" data-ticker="${ticker}">+</button>
+                ${recommendedPutQty > 0 ? 
+                  `<button class="btn btn-sm btn-outline-info ms-1 set-recommended" 
+                          data-ticker="${ticker}" data-value="${recommendedPutQty}"
+                          title="Set to recommended quantity (${recommendedPutQty})">
+                      <i class="bi bi-magic"></i>
+                   </button>` : ''}
+            </div>
+        `;
+        
+        // Format exercise cost and portfolio impact display
+        const exerciseCostDisplay = exerciseCost > 0 ? 
+            formatCurrency(exerciseCost) : 
+            'N/A';
+        
+        const portfolioImpactDisplay = portfolioImpact > 0 ? 
+            `<span class="${portfolioImpact > 50 ? 'text-danger' : portfolioImpact > 25 ? 'text-warning' : 'text-success'}">${formatPercentage(portfolioImpact)}</span>` : 
+            'N/A';
         
         // Build the row HTML with OTM slider control
         row.innerHTML = `
@@ -295,7 +409,10 @@ function updateOptionsTable() {
             <td>${callDetails}</td>
             <td>${callPremium}</td>
             <td>${putDetails}</td>
+            <td>${putQtyInputField}</td>
             <td>${putPremium}</td>
+            <td>${exerciseCostDisplay}</td>
+            <td>${portfolioImpactDisplay}</td>
             <td>
                 <div class="btn-group btn-group-sm">
                     <button class="btn btn-outline-primary refresh-options" data-ticker="${ticker}">
@@ -317,7 +434,7 @@ function updateOptionsTable() {
         const noticeRow = document.createElement('tr');
         noticeRow.className = 'table-warning';
         noticeRow.innerHTML = `
-            <td colspan="10" class="text-center">
+            <td colspan="13" class="text-center">
                 <small><i class="bi bi-info-circle"></i> ${insufficientSharesCount} position(s) with fewer than 100 shares have been hidden (${filteredTickers.join(', ')}), as they cannot be used for covered calls.</small>
             </td>
         `;
@@ -332,7 +449,7 @@ function updateOptionsTable() {
     const summaryRow = document.createElement('tr');
     summaryRow.className = 'table-dark';
     summaryRow.innerHTML = `
-        <td colspan="10" class="text-center">
+        <td colspan="13" class="text-center">
             <div class="d-flex justify-content-around align-items-center py-2">
                 <div class="text-center">
                     <h6 class="mb-0">Weekly Premium</h6>
@@ -355,6 +472,13 @@ function updateOptionsTable() {
                     <h6 class="mb-0">Projected Annual Return</h6>
                     <span class="fs-5 fw-bold text-${summaryData.projectedAnnualReturn > 15 ? 'success' : 'primary'}">${formatPercentage(summaryData.projectedAnnualReturn)}</span>
                     <div class="small text-muted">Of portfolio value</div>
+                </div>
+                <div class="text-center">
+                    <h6 class="mb-0">Total Put Exercise Cost</h6>
+                    <span class="fs-5 fw-bold text-${summaryData.totalPutExerciseCost > summaryData.cashBalance ? 'danger' : 'success'}">${formatCurrency(summaryData.totalPutExerciseCost)}</span>
+                    <div class="small text-muted">
+                        ${formatPercentage((summaryData.totalPutExerciseCost / summaryData.cashBalance) * 100)} of cash
+                    </div>
                 </div>
             </div>
         </td>
@@ -414,6 +538,72 @@ function addOptionsTableEventListeners() {
             }
         });
     });
+    
+    // Add listeners to put quantity increment buttons
+    document.querySelectorAll('.increment-put-qty').forEach(button => {
+        button.addEventListener('click', function() {
+            const ticker = this.getAttribute('data-ticker');
+            const inputElement = document.querySelector(`.put-qty-input[data-ticker="${ticker}"]`);
+            
+            if (inputElement) {
+                const currentValue = parseInt(inputElement.value) || 0;
+                inputElement.value = currentValue + 1;
+                // Trigger change event
+                const event = new Event('change');
+                inputElement.dispatchEvent(event);
+            }
+        });
+    });
+    
+    // Add listeners to put quantity decrement buttons
+    document.querySelectorAll('.decrement-put-qty').forEach(button => {
+        button.addEventListener('click', function() {
+            const ticker = this.getAttribute('data-ticker');
+            const inputElement = document.querySelector(`.put-qty-input[data-ticker="${ticker}"]`);
+            
+            if (inputElement) {
+                const currentValue = parseInt(inputElement.value) || 0;
+                if (currentValue > 0) {
+                    inputElement.value = currentValue - 1;
+                    // Trigger change event
+                    const event = new Event('change');
+                    inputElement.dispatchEvent(event);
+                }
+            }
+        });
+    });
+    
+    // Add listeners to put quantity input fields
+    document.querySelectorAll('.put-qty-input').forEach(input => {
+        input.addEventListener('change', function() {
+            const ticker = this.getAttribute('data-ticker');
+            const value = parseInt(this.value) || 0;
+            
+            if (ticker && tickersData[ticker]) {
+                tickersData[ticker].putQuantity = value;
+                console.log(`Updated put quantity for ${ticker} to ${value}`);
+                
+                // Recalculate earnings and update table
+                updateOptionsTable();
+            }
+        });
+    });
+    
+    // Add listeners to set recommended quantity buttons
+    document.querySelectorAll('.set-recommended').forEach(button => {
+        button.addEventListener('click', function() {
+            const ticker = this.getAttribute('data-ticker');
+            const recommendedValue = parseInt(this.getAttribute('data-value')) || 0;
+            const inputElement = document.querySelector(`.put-qty-input[data-ticker="${ticker}"]`);
+            
+            if (inputElement && recommendedValue > 0) {
+                inputElement.value = recommendedValue;
+                // Trigger change event
+                const event = new Event('change');
+                inputElement.dispatchEvent(event);
+            }
+        });
+    });
 }
 
 /**
@@ -434,7 +624,8 @@ async function refreshOptionsForTicker(ticker) {
             tickersData[ticker] = {
                 data: data,
                 timestamp: new Date().getTime(),
-                otmPercentage: otmPercentage // Preserve the OTM percentage
+                otmPercentage: otmPercentage, // Preserve the OTM percentage
+                putQuantity: tickersData[ticker]?.putQuantity || 0 // Preserve put quantity
             };
             
             updateOptionsTable();
@@ -459,6 +650,13 @@ async function refreshAllOptions() {
     let successCount = 0;
     let errorCount = 0;
     
+    // Fetch portfolio data first to get latest cash balance
+    try {
+        portfolioSummary = await fetchAccountData();
+    } catch (error) {
+        console.error('Error fetching portfolio data:', error);
+    }
+    
     // Process each ticker
     for (const ticker of tickers) {
         try {
@@ -472,7 +670,8 @@ async function refreshAllOptions() {
                 tickersData[ticker] = {
                     data: data,
                     timestamp: new Date().getTime(),
-                    otmPercentage: otmPercentage // Preserve the OTM percentage
+                    otmPercentage: otmPercentage, // Preserve the OTM percentage
+                    putQuantity: tickersData[ticker]?.putQuantity || 0 // Preserve put quantity
                 };
                 successCount++;
             }
@@ -555,23 +754,25 @@ async function orderOptionsForTicker(ticker) {
         
         // Save the put option order
         if (putOption) {
-            // For put options, calculate quantity based on "fully covered by cash"
-            // If we don't have that data, use the same quantity as calls or default to 1
-            const putQuantity = maxCallContracts || 1; // Use the same logic for now, but could be replaced with cash-based calculation
+            // For put options, use the custom quantity we've set
+            const putQuantity = tickersData[ticker].putQuantity || 0;
             
-            const putOrderData = {
-                ticker: ticker,
-                option_type: 'PUT',
-                strike: putOption.strike,
-                expiration: putOption.expiration,
-                premium: putOption.ask || 0,
-                quantity: putQuantity,
-                action: 'SELL', // Default to selling puts
-                details: JSON.stringify(putOption)
-            };
-            
-            // Save the put order
-            await saveOptionOrder(putOrderData);
+            // Only create an order if the quantity is greater than 0
+            if (putQuantity > 0) {
+                const putOrderData = {
+                    ticker: ticker,
+                    option_type: 'PUT',
+                    strike: putOption.strike,
+                    expiration: putOption.expiration,
+                    premium: putOption.ask || 0,
+                    quantity: putQuantity,
+                    action: 'SELL', // Default to selling puts
+                    details: JSON.stringify(putOption)
+                };
+                
+                // Save the put order
+                await saveOptionOrder(putOrderData);
+            }
         }
         
         showAlert(`Orders for ${ticker} saved successfully`, 'success');
@@ -623,6 +824,15 @@ async function orderAllOptions() {
  * Fetch all tickers and their data
  */
 async function loadTickers() {
+    // Fetch portfolio data first to get latest cash balance
+    try {
+        portfolioSummary = await fetchAccountData();
+        console.log("Portfolio summary:", portfolioSummary);
+    } catch (error) {
+        console.error('Error fetching portfolio data:', error);
+    }
+    
+    // Fetch tickers
     const data = await fetchTickers();
     if (data && data.tickers) {
         // Initialize ticker data
@@ -631,7 +841,8 @@ async function loadTickers() {
                 tickersData[ticker] = {
                     data: null,
                     timestamp: 0,
-                    otmPercentage: 10 // Default OTM percentage
+                    otmPercentage: 10, // Default OTM percentage
+                    putQuantity: 0 // Default put quantity
                 };
             }
         });
