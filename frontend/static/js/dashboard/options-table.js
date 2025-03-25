@@ -655,7 +655,7 @@ function addOptionsTableEventListeners() {
                     button.disabled = true;
                     
                     try {
-                        await refreshOptionsForTicker(ticker);
+                        await refreshOptionsForTicker(ticker, true);
                         button.innerHTML = '<i class="bi bi-arrow-repeat"></i> Refresh';
                     } catch (error) {
                         console.error('Error refreshing ticker:', error);
@@ -690,7 +690,7 @@ function addOptionsTableEventListeners() {
                         }
                         
                         // Refresh options with the new OTM percentage
-                        await refreshOptionsForTicker(ticker);
+                        await refreshOptionsForTicker(ticker, true);
                     } catch (error) {
                         console.error(`Error refreshing ${ticker} with new OTM%:`, error);
                     } finally {
@@ -801,6 +801,90 @@ function addOptionsTableEventListeners() {
                     console.error('Error in sell all puts handler:', error);
                 }
             }
+            
+            // Handle refresh all options button click using event delegation
+            if (event.target.id === 'refresh-all-options' || 
+                event.target.closest('#refresh-all-options')) {
+                
+                const button = event.target.id === 'refresh-all-options' ? 
+                               event.target : 
+                               event.target.closest('#refresh-all-options');
+                
+                // Prevent duplicate clicks
+                if (button.disabled) {
+                    console.log('Button already clicked, ignoring');
+                    return;
+                }
+                
+                console.log('Refresh all options button clicked via delegation');
+                button.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Loading...';
+                button.disabled = true;
+                
+                try {
+                    await refreshAllOptions();
+                } catch (error) {
+                    console.error('Error refreshing all options:', error);
+                } finally {
+                    button.innerHTML = '<i class="bi bi-arrow-repeat"></i> Refresh All';
+                    button.disabled = false;
+                }
+            }
+            
+            // Handle refresh all calls button click using event delegation
+            if (event.target.id === 'refresh-all-calls' || 
+                event.target.closest('#refresh-all-calls')) {
+                
+                const button = event.target.id === 'refresh-all-calls' ? 
+                               event.target : 
+                               event.target.closest('#refresh-all-calls');
+                
+                // Prevent duplicate clicks
+                if (button.disabled) {
+                    console.log('Button already clicked, ignoring');
+                    return;
+                }
+                
+                console.log('Refresh all calls button clicked via delegation');
+                button.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Loading...';
+                button.disabled = true;
+                
+                try {
+                    await refreshAllOptions('CALL');
+                } catch (error) {
+                    console.error('Error refreshing all call options:', error);
+                } finally {
+                    button.innerHTML = '<i class="bi bi-arrow-repeat"></i> Refresh All Calls';
+                    button.disabled = false;
+                }
+            }
+            
+            // Handle refresh all puts button click using event delegation
+            if (event.target.id === 'refresh-all-puts' || 
+                event.target.closest('#refresh-all-puts')) {
+                
+                const button = event.target.id === 'refresh-all-puts' ? 
+                               event.target : 
+                               event.target.closest('#refresh-all-puts');
+                
+                // Prevent duplicate clicks
+                if (button.disabled) {
+                    console.log('Button already clicked, ignoring');
+                    return;
+                }
+                
+                console.log('Refresh all puts button clicked via delegation');
+                button.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Loading...';
+                button.disabled = true;
+                
+                try {
+                    await refreshAllOptions('PUT');
+                } catch (error) {
+                    console.error('Error refreshing all put options:', error);
+                } finally {
+                    button.innerHTML = '<i class="bi bi-arrow-repeat"></i> Refresh All Puts';
+                    button.disabled = false;
+                }
+            }
         });
         
         // Mark container event listeners as initialized
@@ -818,7 +902,8 @@ function addOptionsTableEventListeners() {
     
     // Register dedicated listeners for the various buttons
     
-    // Refresh all button
+    // Refresh all button - REMOVED this button from UI, but keeping code with null check
+    // for backward compatibility
     const refreshAllButton = document.getElementById('refresh-all-options');
     if (refreshAllButton) {
         refreshAllButton.addEventListener('click', async () => {
@@ -905,8 +990,9 @@ function addOtmInputEventListeners() {
 /**
  * Refresh options data for a specific ticker
  * @param {string} ticker - The ticker symbol to refresh options for
+ * @param {boolean} [updateUI=false] - Whether to update the UI after refreshing
  */
-async function refreshOptionsForTicker(ticker) {
+async function refreshOptionsForTicker(ticker, updateUI = false) {
     try {
         // Get OTM percentage from ticker data or use default
         const otmPercentage = tickersData[ticker]?.otmPercentage || 10;
@@ -967,11 +1053,15 @@ async function refreshOptionsForTicker(ticker) {
         
         console.log(`Updated tickersData for ${ticker}:`, tickersData[ticker]);
         
-        // Update the UI
-        updateOptionsTable();
-        
-        // Make sure event listeners are added
-        addOptionsTableEventListeners();
+        // Only update the UI if requested - we'll avoid doing this when refreshing all tickers
+        // to prevent the table from being rebuilt multiple times
+        if (updateUI) {
+            // Update the UI
+            updateOptionsTable();
+            
+            // Make sure event listeners are added
+            addOptionsTableEventListeners();
+        }
         
     } catch (error) {
         console.error(`Error refreshing options for ${ticker}:`, error);
@@ -986,24 +1076,15 @@ async function refreshOptionsForTicker(ticker) {
 async function refreshAllOptions(optionType) {
     // Show a loading message
     const optionsTableContainer = document.getElementById('options-table-container');
-    if (optionsTableContainer) {
-        // If refreshing a specific option type, only update that section
-        if (optionType) {
-            const tableId = optionType === 'CALL' ? 'call-options-table' : 'put-options-table';
-            const tableBody = document.querySelector(`#${tableId} tbody`);
-            if (tableBody) {
-                tableBody.innerHTML = '<tr><td colspan="12" class="text-center"><div class="spinner-border spinner-border-sm text-primary" role="status"></div> Loading options data...</td></tr>';
-            }
-        } else {
-            // Otherwise, show loading for the whole container
-            optionsTableContainer.innerHTML = '<div class="text-center my-4"><div class="spinner-border text-primary" role="status"></div><p class="mt-2">Loading options data...</p></div>';
-        }
+    if (!optionsTableContainer) {
+        console.error('Options table container not found');
+        return;
     }
     
     try {
         // Get list of tickers to refresh
-    const tickers = Object.keys(tickersData);
-    if (tickers.length === 0) {
+        const tickers = Object.keys(tickersData);
+        if (tickers.length === 0) {
             const tickersResult = await fetchTickers();
             if (tickersResult && tickersResult.tickers) {
                 tickers.push(...tickersResult.tickers);
@@ -1017,29 +1098,79 @@ async function refreshAllOptions(optionType) {
         }
         
         console.log(`Refreshing options for ${tickers.length} tickers${optionType ? ` (${optionType} options only)` : ''}`);
-    
-    // Process each ticker
-        const promises = [];
-    for (const ticker of tickers) {
-            if (optionType) {
-                // If specific option type, only refresh that type
-                promises.push(refreshOptionsForTickerByType(ticker, optionType));
-            } else {
-                // Otherwise refresh all options
-                promises.push(refreshOptionsForTicker(ticker));
-            }
+        
+        // Get the correct table and button based on optionType
+        let tableId, buttonId;
+        if (optionType === 'CALL') {
+            tableId = 'call-options-table';
+            buttonId = 'refresh-all-calls';
+        } else if (optionType === 'PUT') {
+            tableId = 'put-options-table';
+            buttonId = 'refresh-all-puts';
+        } else {
+            tableId = 'call-options-table'; // Default to call table for display purposes
+            buttonId = 'refresh-all-options';
         }
         
-        // Wait for all promises to resolve
-        await Promise.all(promises);
+        // Process each ticker sequentially to provide visual feedback
+        for (let i = 0; i < tickers.length; i++) {
+            const ticker = tickers[i];
+            
+            // Update the button text to show progress
+            const button = document.getElementById(buttonId);
+            if (button) {
+                const progressText = `Refreshing ${ticker} (${i+1}/${tickers.length})`;
+                button.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> ${progressText}`;
+            } else if (buttonId === 'refresh-all-options') {
+                // The overall refresh button has been removed from UI, use console for progress
+                console.log(`Refreshing ${ticker} (${i+1}/${tickers.length})`);
+            }
+            
+            // Find the row for this ticker to provide visual feedback
+            const table = document.getElementById(tableId);
+            if (table) {
+                const rows = table.querySelectorAll('tbody tr');
+                for (const row of rows) {
+                    const tickerCell = row.querySelector('td:first-child');
+                    if (tickerCell && tickerCell.textContent === ticker) {
+                        // Highlight the row being refreshed
+                        const originalBg = row.style.backgroundColor;
+                        row.style.backgroundColor = '#f0f8ff'; // Light blue background
+                        
+                        // Refresh this ticker
+                        if (optionType) {
+                            await refreshOptionsForTickerByType(ticker, optionType);
+                        } else {
+                            await refreshOptionsForTicker(ticker);
+                        }
+                        
+                        // Reset the background
+                        row.style.backgroundColor = originalBg;
+                        
+                        // Found and processed the row, break the loop
+                        break;
+                    }
+                }
+            } else {
+                // If we can't find the row, still refresh the ticker
+                if (optionType) {
+                    await refreshOptionsForTickerByType(ticker, optionType);
+                } else {
+                    await refreshOptionsForTicker(ticker);
+                }
+            }
+            
+            // Short delay to prevent UI freezing
+            await new Promise(resolve => setTimeout(resolve, 50));
+        }
         
-        // Final UI update
+        // Final UI update after all tickers are refreshed
         updateOptionsTable();
         
         // Make sure event listeners are added
         addOptionsTableEventListeners();
         
-            } catch (error) {
+    } catch (error) {
         console.error(`Error refreshing ${optionType || 'all'} options:`, error);
         showAlert(`Error refreshing options: ${error.message}`, 'danger');
         
@@ -1052,8 +1183,9 @@ async function refreshAllOptions(optionType) {
  * Refresh options data for a specific ticker and option type
  * @param {string} ticker - The ticker symbol to refresh options for
  * @param {string} optionType - The option type to refresh ('CALL' or 'PUT')
+ * @param {boolean} [updateUI=false] - Whether to update the UI after refreshing
  */
-async function refreshOptionsForTickerByType(ticker, optionType) {
+async function refreshOptionsForTickerByType(ticker, optionType, updateUI = false) {
     try {
         // Get OTM percentage from ticker data or use default
         const otmPercentage = tickersData[ticker]?.otmPercentage || 10;
@@ -1104,6 +1236,16 @@ async function refreshOptionsForTickerByType(ticker, optionType) {
         
         console.log(`Updated ${optionType} data for ${ticker}:`, tickersData[ticker]);
         
+        // Only update the UI if requested - we'll avoid doing this when refreshing all tickers
+        // to prevent the table from being rebuilt multiple times
+        if (updateUI) {
+            // Update the UI
+            updateOptionsTable();
+            
+            // Make sure event listeners are added
+            addOptionsTableEventListeners();
+        }
+        
     } catch (error) {
         console.error(`Error refreshing ${optionType} options for ${ticker}:`, error);
         showAlert(`Error refreshing ${optionType} options for ${ticker}: ${error.message}`, 'danger');
@@ -1114,6 +1256,12 @@ async function refreshOptionsForTickerByType(ticker, optionType) {
  * Fetch all tickers and their data
  */
 async function loadTickers() {
+    // Show a loading message first
+    const optionsTableContainer = document.getElementById('options-table-container');
+    if (optionsTableContainer) {
+        optionsTableContainer.innerHTML = '<div class="text-center my-4"><div class="spinner-border text-primary" role="status"></div><p class="mt-2">Loading options data...</p></div>';
+    }
+    
     // Fetch portfolio data first to get latest cash balance
     try {
         portfolioSummary = await fetchAccountData();
@@ -1125,26 +1273,47 @@ async function loadTickers() {
     // Fetch tickers
     const data = await fetchTickers();
     if (data && data.tickers) {
+        console.log(`Fetched ${data.tickers.length} tickers, loading their data...`);
+        
         // Initialize ticker data
         data.tickers.forEach(ticker => {
             if (!tickersData[ticker]) {
                 tickersData[ticker] = {
                     data: null,
                     otmPercentage: 10, // Default OTM percentage
-                    putQuantity: 1 // Default put quantity (updated from 0 to 1)
+                    putQuantity: 1 // Default put quantity
                 };
             }
         });
         
-        // Update the UI
+        // First fetch all data for tickers - do NOT update the UI yet
+        const totalTickers = data.tickers.length;
+        for (let i = 0; i < totalTickers; i++) {
+            const ticker = data.tickers[i];
+            
+            // Update loading message to show progress
+            if (optionsTableContainer) {
+                optionsTableContainer.innerHTML = `<div class="text-center my-4">
+                    <div class="spinner-border text-primary" role="status"></div>
+                    <p class="mt-2">Loading data for ${ticker} (${i+1}/${totalTickers})...</p>
+                </div>`;
+            }
+            
+            // Fetch data without updating UI
+            await refreshOptionsForTicker(ticker, false);
+        }
+        
+        // Now that all data is fetched, update the UI once
+        console.log("All ticker data loaded, updating table...");
         updateOptionsTable();
         
         // Add event listeners to the options table
         addOptionsTableEventListeners();
-        
-        // Refresh data for each ticker
-        for (const ticker of data.tickers) {
-            await refreshOptionsForTicker(ticker);
+    } else {
+        console.error("Failed to fetch tickers data");
+        // Show error message in the table container
+        if (optionsTableContainer) {
+            optionsTableContainer.innerHTML = '<div class="alert alert-danger">Failed to load tickers data. Please try refreshing the page.</div>';
         }
     }
 }
