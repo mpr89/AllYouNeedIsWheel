@@ -473,8 +473,9 @@ function updateOptionsTable() {
                     <div class="input-group input-group-sm">
                         <input type="number" class="form-control form-control-sm otm-input" 
                             data-ticker="${ticker}" 
+                            data-option-type="CALL"
                             min="1" max="50" step="1" 
-                            value="${tickerData.otmPercentage || 10}">
+                            value="${tickerData.callOtmPercentage || 10}">
                         <button class="btn btn-outline-secondary btn-sm refresh-otm" data-ticker="${ticker}">
                             <i class="bi bi-arrow-repeat"></i>
                         </button>
@@ -538,8 +539,9 @@ function updateOptionsTable() {
                     <div class="input-group input-group-sm">
                         <input type="number" class="form-control form-control-sm otm-input" 
                             data-ticker="${ticker}" 
+                            data-option-type="PUT"
                             min="1" max="50" step="1" 
-                            value="${tickerData.otmPercentage || 10}">
+                            value="${tickerData.putOtmPercentage || 10}">
                         <button class="btn btn-outline-secondary btn-sm refresh-otm" data-ticker="${ticker}">
                             <i class="bi bi-arrow-repeat"></i>
                         </button>
@@ -683,14 +685,21 @@ function addOptionsTableEventListeners() {
                         const inputGroup = button.closest('.input-group');
                         const otmInput = inputGroup.querySelector('.otm-input');
                         const otmPercentage = parseInt(otmInput.value, 10);
+                        const optionType = otmInput.dataset.optionType || 'CALL'; // Get option type from data attribute
                         
-                        // Update ticker's OTM percentage
+                        // Update ticker's OTM percentage based on option type
                         if (tickersData[ticker]) {
-                            tickersData[ticker].otmPercentage = otmPercentage;
+                            if (optionType === 'CALL') {
+                                tickersData[ticker].callOtmPercentage = otmPercentage;
+                                console.log(`Updated ${ticker} call OTM% to ${otmPercentage}`);
+                            } else {
+                                tickersData[ticker].putOtmPercentage = otmPercentage;
+                                console.log(`Updated ${ticker} put OTM% to ${otmPercentage}`);
+                            }
                         }
                         
                         // Refresh options with the new OTM percentage
-                        await refreshOptionsForTicker(ticker, true);
+                        await refreshOptionsForTickerByType(ticker, optionType, true);
                     } catch (error) {
                         console.error(`Error refreshing ${ticker} with new OTM%:`, error);
                     } finally {
@@ -977,11 +986,17 @@ function addOtmInputEventListeners() {
         input.addEventListener('change', function() {
             const ticker = this.dataset.ticker;
             const otmPercentage = parseInt(this.value, 10);
+            const optionType = this.dataset.optionType || 'CALL'; // Get option type from data attribute
             
-            // Update ticker's OTM percentage
+            // Update ticker's OTM percentage based on option type
             if (tickersData[ticker]) {
-                tickersData[ticker].otmPercentage = otmPercentage;
-                console.log(`Updated ${ticker} OTM% to ${otmPercentage}`);
+                if (optionType === 'CALL') {
+                    tickersData[ticker].callOtmPercentage = otmPercentage;
+                    console.log(`Updated ${ticker} call OTM% to ${otmPercentage}`);
+                } else {
+                    tickersData[ticker].putOtmPercentage = otmPercentage;
+                    console.log(`Updated ${ticker} put OTM% to ${otmPercentage}`);
+                }
             }
         });
     });
@@ -994,14 +1009,15 @@ function addOtmInputEventListeners() {
  */
 async function refreshOptionsForTicker(ticker, updateUI = false) {
     try {
-        // Get OTM percentage from ticker data or use default
-        const otmPercentage = tickersData[ticker]?.otmPercentage || 10;
+        // Get OTM percentages from ticker data or use default
+        const callOtmPercentage = tickersData[ticker]?.callOtmPercentage || 10;
+        const putOtmPercentage = tickersData[ticker]?.putOtmPercentage || 10;
         
-        console.log(`Refreshing options for ${ticker} with OTM ${otmPercentage}%`);
+        console.log(`Refreshing options for ${ticker} with call OTM ${callOtmPercentage}% and put OTM ${putOtmPercentage}%`);
         
-        // Make two separate API calls for call and put options
-        const callData = await fetchOptionData(ticker, otmPercentage, 'CALL');
-        const putData = await fetchOptionData(ticker, otmPercentage, 'PUT');
+        // Make two separate API calls for call and put options with their respective OTM percentages
+        const callData = await fetchOptionData(ticker, callOtmPercentage, 'CALL');
+        const putData = await fetchOptionData(ticker, putOtmPercentage, 'PUT');
         
         console.log('CALL data:', callData);
         console.log('PUT data:', putData);
@@ -1047,7 +1063,8 @@ async function refreshOptionsForTicker(ticker, updateUI = false) {
         // Update the ticker data
         tickersData[ticker] = {
             data: mergedData.data,
-            otmPercentage: otmPercentage,
+            callOtmPercentage: callOtmPercentage,
+            putOtmPercentage: putOtmPercentage,
             putQuantity: tickersData[ticker]?.putQuantity || 1  // Default to 1 for put quantity
         };
         
@@ -1187,8 +1204,13 @@ async function refreshAllOptions(optionType) {
  */
 async function refreshOptionsForTickerByType(ticker, optionType, updateUI = false) {
     try {
-        // Get OTM percentage from ticker data or use default
-        const otmPercentage = tickersData[ticker]?.otmPercentage || 10;
+        // Get the appropriate OTM percentage based on option type
+        let otmPercentage;
+        if (optionType === 'CALL') {
+            otmPercentage = tickersData[ticker]?.callOtmPercentage || 10;
+        } else {
+            otmPercentage = tickersData[ticker]?.putOtmPercentage || 10;
+        }
         
         console.log(`Refreshing ${optionType} options for ${ticker} with OTM ${otmPercentage}%`);
         
@@ -1203,7 +1225,8 @@ async function refreshOptionsForTickerByType(ticker, optionType, updateUI = fals
                 data: {
                     data: {}
                 },
-                otmPercentage: otmPercentage,
+                callOtmPercentage: optionType === 'CALL' ? otmPercentage : 10,
+                putOtmPercentage: optionType === 'PUT' ? otmPercentage : 10,
                 putQuantity: optionType === 'PUT' ? 1 : 0
             };
             
@@ -1280,7 +1303,8 @@ async function loadTickers() {
             if (!tickersData[ticker]) {
                 tickersData[ticker] = {
                     data: null,
-                    otmPercentage: 10, // Default OTM percentage
+                    callOtmPercentage: 10, // Default OTM percentage for calls
+                    putOtmPercentage: 10, // Default OTM percentage for puts
                     putQuantity: 1 // Default put quantity
                 };
             }
