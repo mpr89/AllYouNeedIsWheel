@@ -26,12 +26,18 @@ def otm_options():
     # Get parameters from request
     ticker = request.args.get('tickers')
     otm_percentage = float(request.args.get('otm', 10))
+    option_type = request.args.get('optionType')  # New parameter for filtering by option type
+    
+    # Validate option_type if provided
+    if option_type and option_type not in ['CALL', 'PUT']:
+        return jsonify({"error": f"Invalid option_type: {option_type}. Must be 'CALL' or 'PUT'"}), 400
     
     # Use the existing module-level instance instead of creating a new one
-    # Call the service with appropriate parameters
+    # Call the service with appropriate parameters including the new option_type
     result = options_service.get_otm_options(
         ticker=ticker,
-        otm_percentage=otm_percentage
+        otm_percentage=otm_percentage,
+        option_type=option_type
     )
     
     return jsonify(result)

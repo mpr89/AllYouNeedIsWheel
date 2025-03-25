@@ -645,6 +645,9 @@ document.addEventListener('DOMContentLoaded', () => {
 // Make sure auto-refresh is stopped when the page is unloaded
 window.addEventListener('beforeunload', stopAutoRefresh);
 
+// Expose loadPendingOrders function globally
+window.loadPendingOrders = loadPendingOrders;
+
 // Export functions
 export {
     loadPendingOrders,

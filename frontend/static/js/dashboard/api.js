@@ -67,12 +67,18 @@ async function fetchWeeklyOptionIncome() {
  * Fetch option data for a ticker
  * @param {string} ticker - The stock symbol
  * @param {number} otmPercentage - The OTM percentage value (default: 10)
+ * @param {string} optionType - The option type to filter by ('CALL' or 'PUT')
  * @returns {Promise} Promise with option data
  */
-async function fetchOptionData(ticker, otmPercentage = 10) {
+async function fetchOptionData(ticker, otmPercentage = 10, optionType = null) {
     try {
         const timestamp = new Date().getTime();
-        const response = await fetch(`/api/options/otm?tickers=${encodeURIComponent(ticker)}&otm=${otmPercentage}&real_time=true&options_only=true&t=${timestamp}`, {
+        const url = `/api/options/otm?tickers=${encodeURIComponent(ticker)}&otm=${otmPercentage}&real_time=true&options_only=true&t=${timestamp}`;
+        
+        // Add option type to URL if provided
+        const finalUrl = optionType ? `${url}&optionType=${optionType}` : url;
+        
+        const response = await fetch(finalUrl, {
             headers: {
                 'Cache-Control': 'no-cache, no-store, must-revalidate',
                 'Pragma': 'no-cache',
