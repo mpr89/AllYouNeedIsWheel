@@ -577,18 +577,29 @@ function updateOptionsTable() {
             const recommendation = calculateRecommendedPutQuantity(stockPrice, strike, ticker);
             const recommendedQty = recommendation.quantity;
             
+            // Store the current quantity in the ticker data for persistence
+            if (!tickerData.putQuantity) {
+                tickerData.putQuantity = recommendedQty;
+            }
+            const currentQty = tickerData.putQuantity;
+            
             // Calculate premium
             const premiumPerContract = bid * 100; // Premium per contract (100 shares)
-            const totalPremium = premiumPerContract * recommendedQty;
+            const totalPremium = premiumPerContract * currentQty;
             
             // Calculate cash required
-            const cashRequired = strike * 100 * recommendedQty;
+            const cashRequired = strike * 100 * currentQty;
             
             // Calculate return on cash
             const returnOnCash = cashRequired > 0 ? (totalPremium / cashRequired) * 100 : 0;
             
             // Add row to put table
             const putRow = document.createElement('tr');
+            // Store row data as dataset attributes for recalculation
+            putRow.dataset.ticker = ticker;
+            putRow.dataset.premium = premiumPerContract;
+            putRow.dataset.strike = strike;
+            
             putRow.innerHTML = `
             <td>${ticker}</td>
             <td>${formatCurrency(stockPrice)}</td>
@@ -608,10 +619,17 @@ function updateOptionsTable() {
                 <td>${expiration}</td>
                 <td>${formatCurrency(bid)}</td>
                 <td>${delta.toFixed(2)}</td>
-                <td>${recommendedQty}</td>
-                <td>${formatCurrency(totalPremium)}</td>
-                <td>${formatPercentage(returnOnCash)}</td>
-                <td>${formatCurrency(cashRequired)}</td>
+                <td>
+                    <div class="input-group input-group-sm">
+                        <input type="number" class="form-control form-control-sm put-qty-input" 
+                            data-ticker="${ticker}"
+                            min="1" max="100" step="1" 
+                            value="${currentQty}">
+                    </div>
+                </td>
+                <td class="total-premium">${formatCurrency(totalPremium)}</td>
+                <td class="return-on-cash">${formatPercentage(returnOnCash)}</td>
+                <td class="cash-required">${formatCurrency(cashRequired)}</td>
                 <td>
                     <button class="btn btn-sm btn-primary sell-option" data-ticker="${ticker}" data-option-type="PUT" data-strike="${strike}" data-expiration="${expiration}">
                         Sell
@@ -679,6 +697,9 @@ function updateOptionsTable() {
     
     // Add input event listeners for OTM% inputs
     addOtmInputEventListeners();
+    
+    // Add input event listeners for put quantity inputs
+    addPutQtyInputEventListeners();
     
     console.log('Options table update complete. Call count:', callCount, 'Put count:', putCount);
 }
@@ -836,7 +857,16 @@ function addOptionsTableEventListeners() {
                         action: 'SELL',
                         quantity: optionType === 'CALL' ? 
                             Math.floor(tickersData[ticker]?.data?.data?.[ticker]?.position / 100) || 1 :
-                            (tickersData[ticker]?.putQuantity || 1)
+                            (tickersData[ticker]?.putQuantity || 1),
+                        // Include additional data if available
+                        bid: button.dataset.bid || 0,
+                        ask: button.dataset.ask || 0,
+                        last: button.dataset.last || 0,
+                        delta: button.dataset.delta || 0,
+                        gamma: button.dataset.gamma || 0,
+                        theta: button.dataset.theta || 0,
+                        vega: button.dataset.vega || 0,
+                        implied_volatility: button.dataset.implied_volatility || 0
                     };
                     
                     try {
@@ -1098,6 +1128,86 @@ function addOtmInputEventListeners() {
             }
         });
     });
+}
+
+/**
+ * Add event listeners for put quantity inputs - these need to be added each time
+ * the table is updated
+ */
+function addPutQtyInputEventListeners() {
+    document.querySelectorAll('.put-qty-input').forEach(input => {
+        input.addEventListener('change', function() {
+            const ticker = this.dataset.ticker;
+            const newQty = parseInt(this.value, 10);
+            
+            // Update ticker's putQuantity for persistence
+            if (tickersData[ticker]) {
+                tickersData[ticker].putQuantity = newQty;
+                console.log(`Updated ${ticker} put quantity to ${newQty}`);
+            }
+            
+            // Update the rest of the row
+            const row = this.closest('tr');
+            if (row) {
+                const premiumPerContract = parseFloat(row.dataset.premium) || 0;
+                const strike = parseFloat(row.dataset.strike) || 0;
+                
+                // Recalculate values
+                const totalPremium = premiumPerContract * newQty;
+                const cashRequired = strike * 100 * newQty;
+                const returnOnCash = cashRequired > 0 ? (totalPremium / cashRequired) * 100 : 0;
+                
+                // Update cells
+                const totalPremiumCell = row.querySelector('.total-premium');
+                const returnOnCashCell = row.querySelector('.return-on-cash');
+                const cashRequiredCell = row.querySelector('.cash-required');
+                
+                if (totalPremiumCell) totalPremiumCell.textContent = formatCurrency(totalPremium);
+                if (returnOnCashCell) returnOnCashCell.textContent = formatPercentage(returnOnCash);
+                if (cashRequiredCell) cashRequiredCell.textContent = formatCurrency(cashRequired);
+                
+                // Also update the earnings summary since total premiums changed
+                updateEarningsSummary();
+            }
+        });
+    });
+}
+
+/**
+ * Update the earnings summary without rebuilding the entire table
+ */
+function updateEarningsSummary() {
+    // Calculate earnings summary
+    const earningsSummary = calculateEarningsSummary(tickersData);
+    
+    // Find the earnings summary section
+    const summarySection = document.querySelector('.card.shadow-sm.mt-4');
+    if (!summarySection) return;
+    
+    // Update the weekly premium values
+    const weeklyCallsPremiumCell = summarySection.querySelector('td:nth-child(2)');
+    const weeklyPutsPremiumCell = summarySection.querySelector('td:nth-child(3)');
+    const weeklyTotalPremiumCell = summarySection.querySelector('td:nth-child(4)');
+    const weeklyReturnCell = summarySection.querySelector('td:nth-child(6)');
+    const annualReturnCell = summarySection.querySelector('td:nth-child(7)');
+    
+    // Update second row cells
+    const stockValueCell = summarySection.querySelector('tr:nth-child(2) td:nth-child(2)');
+    const cashBalanceCell = summarySection.querySelector('tr:nth-child(2) td:nth-child(3)');
+    const cspRequirementCell = summarySection.querySelector('tr:nth-child(2) td:nth-child(4)');
+    const annualIncomeCell = summarySection.querySelector('tr:nth-child(2) td:nth-child(6)');
+    
+    // Update the cells if found
+    if (weeklyCallsPremiumCell) weeklyCallsPremiumCell.textContent = `Calls: ${formatCurrency(earningsSummary.totalWeeklyCallPremium)}`;
+    if (weeklyPutsPremiumCell) weeklyPutsPremiumCell.textContent = `Puts: ${formatCurrency(earningsSummary.totalWeeklyPutPremium)}`;
+    if (weeklyTotalPremiumCell) weeklyTotalPremiumCell.textContent = `Total: ${formatCurrency(earningsSummary.totalWeeklyPremium)}`;
+    if (weeklyReturnCell) weeklyReturnCell.textContent = formatPercentage(earningsSummary.weeklyReturn);
+    if (annualReturnCell) annualReturnCell.textContent = `Annual: ${formatPercentage(earningsSummary.projectedAnnualReturn)}`;
+    
+    if (stockValueCell) stockValueCell.textContent = `Stock: ${formatCurrency(earningsSummary.portfolioValue)}`;
+    if (cashBalanceCell) cashBalanceCell.textContent = `Cash: ${formatCurrency(earningsSummary.cashBalance)}`;
+    if (cspRequirementCell) cspRequirementCell.textContent = `CSP Requirement: ${formatCurrency(earningsSummary.totalPutExerciseCost)}`;
+    if (annualIncomeCell) annualIncomeCell.textContent = formatCurrency(earningsSummary.projectedAnnualEarnings);
 }
 
 /**
