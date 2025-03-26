@@ -89,11 +89,43 @@ async function fetchOptionData(ticker, otmPercentage = 10, optionType = null) {
         if (!response.ok) {
             throw new Error(`HTTP error ${response.status}`);
         }
-        return await response.json();
+        
+        // Get response as text first to fix any NaN values
+        const responseText = await response.text();
+        
+        // Replace any NaN values with null (or 0) for proper JSON parsing
+        let sanitizedResponse = responseText
+            .replace(/:NaN/g, ':null')
+            .replace(/=NaN/g, '=null')
+            .replace(/: NaN/g, ': null');
+            
+        console.log(`Sanitized response for ${ticker} to fix NaN values`);
+        
+        // Parse the sanitized JSON
+        try {
+            return JSON.parse(sanitizedResponse);
+        } catch (parseError) {
+            console.error(`JSON parse error for ${ticker} even after sanitizing:`, parseError);
+            console.error('Response text:', sanitizedResponse.substring(0, 200) + '...');
+            throw parseError;
+        }
     } catch (error) {
         console.error(`Error fetching options for ${ticker}:`, error);
         showAlert(`Error fetching options for ${ticker}: ${error.message}`, 'danger');
-        return null;
+        
+        // Return a fallback empty structure to prevent further errors
+        return {
+            status: "error",
+            message: error.message,
+            data: {
+                [ticker]: {
+                    stock_price: 0,
+                    position: 0,
+                    calls: [],
+                    puts: []
+                }
+            }
+        };
     }
 }
 

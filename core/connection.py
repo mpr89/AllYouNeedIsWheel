@@ -191,8 +191,12 @@ class IBConnection:
             ticker = self.ib.reqMktData(qualified_contract)
             
             # Wait for market data to be received
-            self.ib.sleep(0.2)
-            
+            for _ in range(5):
+                self.ib.sleep(0.1)
+                # Check if we have model greeks data
+                if hasattr(ticker, 'last') and ticker.last:
+                    break# Wait for data to arrive
+            print(f"Ticker: {ticker}")
             # Get the last price
             last_price = ticker.last if ticker.last else (ticker.close if ticker.close else None)
             bid_price = ticker.bid if ticker.bid else None
@@ -269,7 +273,11 @@ class IBConnection:
             
             # Get current stock price for reference
             ticker = self.ib.reqMktData(stock_contract)
-            self.ib.sleep(0.2)  # Wait for data to arrive
+            for _ in range(10):
+                self.ib.sleep(0.1)
+                # Check if we have model greeks data
+                if hasattr(ticker, 'last') and ticker.last:
+                    break# Wait for data to arrive
             stock_price = ticker.last if hasattr(ticker, 'last') and ticker.last > 0 else ticker.close
             self.ib.cancelMktData(stock_contract)
             

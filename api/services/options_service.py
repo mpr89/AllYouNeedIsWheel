@@ -595,7 +595,6 @@ class OptionsService:
                 logger.error(f"Error getting mock stock price for {ticker}: {e}")
                 logger.error(traceback.format_exc())
                 stock_price = 100.0  # Default fallback price
-        
         # Store stock price in result
         result['stock_price'] = stock_price
         
