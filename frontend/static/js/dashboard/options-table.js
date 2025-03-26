@@ -236,6 +236,11 @@ function updateOptionsTable() {
         return;
     }
     
+    // Remember which tab was active before rebuilding the UI
+    const putTabWasActive = document.querySelector('#put-options-tab.active') !== null ||
+                           document.querySelector('#put-options-section.active') !== null;
+    console.log("Put tab was active before update:", putTabWasActive);
+    
     // Clear existing tables
     optionsTableContainer.innerHTML = '';
     
@@ -287,19 +292,19 @@ function updateOptionsTable() {
     const tabsHTML = `
         <ul class="nav nav-tabs mb-3" id="options-tabs" role="tablist">
             <li class="nav-item" role="presentation">
-                <button class="nav-link active" id="call-options-tab" data-bs-toggle="tab" data-bs-target="#call-options-section" type="button" role="tab" aria-controls="call-options-section" aria-selected="true">
+                <button class="nav-link ${putTabWasActive ? '' : 'active'}" id="call-options-tab" data-bs-toggle="tab" data-bs-target="#call-options-section" type="button" role="tab" aria-controls="call-options-section" aria-selected="${putTabWasActive ? 'false' : 'true'}">
                     Covered Calls
                 </button>
             </li>
             <li class="nav-item" role="presentation">
-                <button class="nav-link" id="put-options-tab" data-bs-toggle="tab" data-bs-target="#put-options-section" type="button" role="tab" aria-controls="put-options-section" aria-selected="false">
+                <button class="nav-link ${putTabWasActive ? 'active' : ''}" id="put-options-tab" data-bs-toggle="tab" data-bs-target="#put-options-section" type="button" role="tab" aria-controls="put-options-section" aria-selected="${putTabWasActive ? 'true' : 'false'}">
                     Cash-Secured Puts
                 </button>
             </li>
         </ul>
         
         <div class="tab-content" id="options-tabs-content">
-            <div class="tab-pane fade show active" id="call-options-section" role="tabpanel" aria-labelledby="call-options-tab">
+            <div class="tab-pane fade ${putTabWasActive ? '' : 'show active'}" id="call-options-section" role="tabpanel" aria-labelledby="call-options-tab">
                 <div class="d-flex justify-content-end mb-2">
                     <button class="btn btn-sm btn-outline-success me-2" id="sell-all-calls">
                         <i class="bi bi-check2-all"></i> Sell All
@@ -331,7 +336,7 @@ function updateOptionsTable() {
                 </div>
             </div>
             
-            <div class="tab-pane fade" id="put-options-section" role="tabpanel" aria-labelledby="put-options-tab">
+            <div class="tab-pane fade ${putTabWasActive ? 'show active' : ''}" id="put-options-section" role="tabpanel" aria-labelledby="put-options-tab">
                 <div class="d-flex justify-content-end mb-2">
                     <button class="btn btn-sm btn-outline-success me-2" id="sell-all-puts">
                         <i class="bi bi-check2-all"></i> Sell All
@@ -1009,70 +1014,88 @@ function addOtmInputEventListeners() {
  */
 async function refreshOptionsForTicker(ticker, updateUI = false) {
     try {
-        // Get OTM percentages from ticker data or use default
+        // Remember which tab was active before refreshing
+        const putTabWasActive = document.querySelector('#put-options-tab.active') !== null ||
+                               document.querySelector('#put-options-section.active') !== null;
+        console.log(`Put tab was active before refreshing ${ticker}:`, putTabWasActive);
+        
+        // Get OTM percentages for calls and puts
         const callOtmPercentage = tickersData[ticker]?.callOtmPercentage || 10;
         const putOtmPercentage = tickersData[ticker]?.putOtmPercentage || 10;
         
         console.log(`Refreshing options for ${ticker} with call OTM ${callOtmPercentage}% and put OTM ${putOtmPercentage}%`);
         
-        // Make two separate API calls for call and put options with their respective OTM percentages
-        const callData = await fetchOptionData(ticker, callOtmPercentage, 'CALL');
-        const putData = await fetchOptionData(ticker, putOtmPercentage, 'PUT');
+        // Make API call for call options
+        const callOptionData = await fetchOptionData(ticker, callOtmPercentage, 'CALL');
         
-        console.log('CALL data:', callData);
-        console.log('PUT data:', putData);
+        // Make API call for put options
+        const putOptionData = await fetchOptionData(ticker, putOtmPercentage, 'PUT');
         
-        // Merge the data before updating tickersData
-        const mergedData = {
-            data: {
-                data: {}
-            }
-        };
+        console.log(`Call data for ${ticker}:`, callOptionData);
+        console.log(`Put data for ${ticker}:`, putOptionData);
         
-        // Initialize the ticker data with empty arrays for calls and puts
-        mergedData.data.data[ticker] = {
-            stock_price: 0,
-            position: 0,
-            calls: [],
-            puts: []
-        };
-        
-        // Copy call data if available
-        if (callData && callData.data && callData.data[ticker]) {
-            console.log(`Processing call data for ${ticker}`);
-            mergedData.data.data[ticker].stock_price = callData.data[ticker].stock_price || 0;
-            mergedData.data.data[ticker].position = callData.data[ticker].position || 0;
-            mergedData.data.data[ticker].calls = callData.data[ticker].calls || [];
+        // Make sure tickersData is initialized for this ticker
+        if (!tickersData[ticker]) {
+            tickersData[ticker] = {
+                data: {
+                    data: {}
+                },
+                callOtmPercentage: callOtmPercentage,
+                putOtmPercentage: putOtmPercentage,
+                putQuantity: 1
+            };
+            
+            // Initialize the ticker data structure
+            tickersData[ticker].data.data[ticker] = {
+                stock_price: 0,
+                position: 0,
+                calls: [],
+                puts: []
+            };
         }
         
-        // Copy put data if available
-        if (putData && putData.data && putData.data[ticker]) {
-            console.log(`Processing put data for ${ticker}`);
-            // If we didn't get stock price and position from call data, use put data
-            if (!mergedData.data.data[ticker].stock_price) {
-                mergedData.data.data[ticker].stock_price = putData.data[ticker].stock_price || 0;
-            }
-            if (!mergedData.data.data[ticker].position) {
-                mergedData.data.data[ticker].position = putData.data[ticker].position || 0;
-            }
-            mergedData.data.data[ticker].puts = putData.data[ticker].puts || [];
+        // Merge call and put option data
+        if (callOptionData && callOptionData.data && callOptionData.data[ticker]) {
+            // Create or update ticker data
+            tickersData[ticker].data = tickersData[ticker].data || { data: {} };
+            tickersData[ticker].data.data = tickersData[ticker].data.data || {};
+            tickersData[ticker].data.data[ticker] = tickersData[ticker].data.data[ticker] || {};
+            
+            // Update stock price and position
+            tickersData[ticker].data.data[ticker].stock_price = callOptionData.data[ticker].stock_price || 0;
+            tickersData[ticker].data.data[ticker].position = callOptionData.data[ticker].position || 0;
+            
+            // Update call options
+            tickersData[ticker].data.data[ticker].calls = callOptionData.data[ticker].calls || [];
         }
         
-        console.log('Merged data:', mergedData);
+        // Add put options data
+        if (putOptionData && putOptionData.data && putOptionData.data[ticker]) {
+            // Update put options
+            tickersData[ticker].data.data[ticker].puts = putOptionData.data[ticker].puts || [];
+        }
         
-        // Update the ticker data
-        tickersData[ticker] = {
-            data: mergedData.data,
-            callOtmPercentage: callOtmPercentage,
-            putOtmPercentage: putOtmPercentage,
-            putQuantity: tickersData[ticker]?.putQuantity || 1  // Default to 1 for put quantity
-        };
-        
-        console.log(`Updated tickersData for ${ticker}:`, tickersData[ticker]);
+        console.log(`Updated data for ${ticker}:`, tickersData[ticker]);
         
         // Only update the UI if requested - we'll avoid doing this when refreshing all tickers
         // to prevent the table from being rebuilt multiple times
         if (updateUI) {
+            // If the PUT tab was active before, set it back to active
+            if (putTabWasActive) {
+                const putTab = document.getElementById('put-options-tab');
+                const putSection = document.getElementById('put-options-section');
+                const callTab = document.getElementById('call-options-tab');
+                const callSection = document.getElementById('call-options-section');
+                
+                // Manually set the PUT tab as active if it exists
+                if (putTab && putSection && callTab && callSection) {
+                    putTab.classList.add('active');
+                    putSection.classList.add('show', 'active');
+                    callTab.classList.remove('active');
+                    callSection.classList.remove('show', 'active');
+                }
+            }
+            
             // Update the UI
             updateOptionsTable();
             
@@ -1099,6 +1122,11 @@ async function refreshAllOptions(optionType) {
     }
     
     try {
+        // Remember which tab was active before refreshing
+        const putTabWasActive = document.querySelector('#put-options-tab.active') !== null ||
+                               document.querySelector('#put-options-section.active') !== null;
+        console.log("Put tab was active before refresh:", putTabWasActive);
+        
         // Get list of tickers to refresh
         const tickers = Object.keys(tickersData);
         if (tickers.length === 0) {
@@ -1179,6 +1207,36 @@ async function refreshAllOptions(optionType) {
             
             // Short delay to prevent UI freezing
             await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        
+        // If we're refreshing PUT options specifically, set the PUT tab as active before updating
+        if (optionType === 'PUT') {
+            const putTab = document.getElementById('put-options-tab');
+            const putSection = document.getElementById('put-options-section');
+            const callTab = document.getElementById('call-options-tab');
+            const callSection = document.getElementById('call-options-section');
+            
+            // Manually set the PUT tab as active if it exists
+            if (putTab && putSection && callTab && callSection) {
+                putTab.classList.add('active');
+                putSection.classList.add('show', 'active');
+                callTab.classList.remove('active');
+                callSection.classList.remove('show', 'active');
+            }
+        } else if (putTabWasActive) {
+            // If the PUT tab was active before and we're doing a general refresh, set it back to active
+            const putTab = document.getElementById('put-options-tab');
+            const putSection = document.getElementById('put-options-section');
+            const callTab = document.getElementById('call-options-tab');
+            const callSection = document.getElementById('call-options-section');
+            
+            // Manually set the PUT tab as active if it exists
+            if (putTab && putSection && callTab && callSection) {
+                putTab.classList.add('active');
+                putSection.classList.add('show', 'active');
+                callTab.classList.remove('active');
+                callSection.classList.remove('show', 'active');
+            }
         }
         
         // Final UI update after all tickers are refreshed
@@ -1262,6 +1320,22 @@ async function refreshOptionsForTickerByType(ticker, optionType, updateUI = fals
         // Only update the UI if requested - we'll avoid doing this when refreshing all tickers
         // to prevent the table from being rebuilt multiple times
         if (updateUI) {
+            // If this is a PUT refresh, explicitly set the PUT tab to active before updating
+            if (optionType === 'PUT') {
+                const putTab = document.getElementById('put-options-tab');
+                const putSection = document.getElementById('put-options-section');
+                const callTab = document.getElementById('call-options-tab');
+                const callSection = document.getElementById('call-options-section');
+                
+                // Manually set the PUT tab as active if it exists
+                if (putTab && putSection && callTab && callSection) {
+                    putTab.classList.add('active');
+                    putSection.classList.add('show', 'active');
+                    callTab.classList.remove('active');
+                    callSection.classList.remove('show', 'active');
+                }
+            }
+            
             // Update the UI
             updateOptionsTable();
             
