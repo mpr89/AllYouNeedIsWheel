@@ -147,10 +147,11 @@ function calculateEarningsSummary(tickersData) {
         totalWeeklyCallPremium: 0,
         totalWeeklyPutPremium: 0,
         totalWeeklyPremium: 0,
-        portfolioValue: 0, // Will be calculated from position value
+        portfolioValue: 0,
         projectedAnnualEarnings: 0,
         projectedAnnualReturn: 0,
-        totalPutExerciseCost: 0, // NEW: Total cost if all puts are exercised
+        weeklyReturn: 0,
+        totalPutExerciseCost: 0,
         cashBalance: portfolioSummary ? portfolioSummary.cash_balance || 0 : 0
     };
     
@@ -182,27 +183,27 @@ function calculateEarningsSummary(tickersData) {
             // Process call options
             if (optionData.calls && optionData.calls.length > 0) {
                 const callOption = optionData.calls[0];
-            if (callOption && callOption.ask) {
-                const callPremiumPerContract = callOption.ask * 100; // Premium per contract (100 shares)
-                const totalCallPremium = callPremiumPerContract * maxCallContracts;
-                summary.totalWeeklyCallPremium += totalCallPremium;
-            }
+                if (callOption && callOption.ask) {
+                    const callPremiumPerContract = callOption.ask * 100; // Premium per contract (100 shares)
+                    const totalCallPremium = callPremiumPerContract * maxCallContracts;
+                    summary.totalWeeklyCallPremium += totalCallPremium;
+                }
             }
             
             // Process put options
             if (optionData.puts && optionData.puts.length > 0) {
                 const putOption = optionData.puts[0];
-            if (putOption && putOption.ask) {
-                const putPremiumPerContract = putOption.ask * 100;
-                // Use custom put quantity if available
-                const ticker = optionData.symbol || Object.keys(tickerData.data.data)[0];
-                const customPutQuantity = tickerData.putQuantity || Math.floor(sharesOwned / 100);
-                const totalPutPremium = putPremiumPerContract * customPutQuantity;
-                summary.totalWeeklyPutPremium += totalPutPremium;
-                
-                // Calculate total exercise cost
-                const putExerciseCost = putOption.strike * customPutQuantity * 100;
-                summary.totalPutExerciseCost += putExerciseCost;
+                if (putOption && putOption.ask) {
+                    const putPremiumPerContract = putOption.ask * 100;
+                    // Use custom put quantity if available
+                    const ticker = optionData.symbol || Object.keys(tickerData.data.data)[0];
+                    const customPutQuantity = tickerData.putQuantity || Math.floor(sharesOwned / 100);
+                    const totalPutPremium = putPremiumPerContract * customPutQuantity;
+                    summary.totalWeeklyPutPremium += totalPutPremium;
+                    
+                    // Calculate total exercise cost
+                    const putExerciseCost = putOption.strike * customPutQuantity * 100;
+                    summary.totalPutExerciseCost += putExerciseCost;
                 }
             }
         });
@@ -211,12 +212,63 @@ function calculateEarningsSummary(tickersData) {
     // Calculate total weekly premium
     summary.totalWeeklyPremium = summary.totalWeeklyCallPremium + summary.totalWeeklyPutPremium;
     
-    // Calculate projected annual earnings (assuming the same premium every week for 52 weeks)
-    summary.projectedAnnualEarnings = summary.totalWeeklyPremium * 52;
+    // Get portfolio value from portfolioSummary first (most accurate source)
+    let totalPortfolioValue = 0;
     
-    // Calculate projected annual return as percentage of portfolio value
-    if (summary.portfolioValue > 0) {
-        summary.projectedAnnualReturn = (summary.projectedAnnualEarnings / summary.portfolioValue) * 100;
+    if (portfolioSummary) {
+        // Use the account_value field if available, which should include both stock value and cash
+        totalPortfolioValue = portfolioSummary.account_value || 0;
+        
+        if (totalPortfolioValue === 0) {
+            // If account_value is not available, try to calculate from stock value and cash balance
+            const stockValue = portfolioSummary.stock_value || 0;
+            const cashBalance = portfolioSummary.cash_balance || 0;
+            totalPortfolioValue = stockValue + cashBalance;
+            
+            // Store these values in summary for display
+            summary.portfolioValue = stockValue;
+            summary.cashBalance = cashBalance;
+        } else {
+            // If we have account_value, still try to get the breakdown for display purposes
+            summary.portfolioValue = portfolioSummary.stock_value || 0;
+            summary.cashBalance = portfolioSummary.cash_balance || 0;
+        }
+    }
+    
+    // Fallback to window.portfolioData if portfolioSummary didn't provide values
+    if (totalPortfolioValue === 0 && window.portfolioData) {
+        summary.portfolioValue = window.portfolioData.stockValue || 0;
+        summary.cashBalance = window.portfolioData.cashBalance || 0;
+        totalPortfolioValue = summary.portfolioValue + summary.cashBalance;
+    }
+    
+    console.log("Portfolio values:", {
+        fromSummary: portfolioSummary ? portfolioSummary.account_value : 'N/A',
+        calculatedTotal: totalPortfolioValue,
+        stockValue: summary.portfolioValue,
+        cashBalance: summary.cashBalance
+    });
+    
+    // Calculate weekly return percentage against total portfolio value
+    if (totalPortfolioValue > 0) {
+        summary.weeklyReturn = (summary.totalWeeklyPremium / totalPortfolioValue) * 100;
+        
+        // Calculate projected annual earnings (Weekly premium * 52 weeks)
+        summary.projectedAnnualEarnings = summary.totalWeeklyPremium * 52;
+        
+        // Calculate projected annual return as annual income divided by portfolio value
+        summary.projectedAnnualReturn = (summary.projectedAnnualEarnings / totalPortfolioValue) * 100;
+        
+        // Log values for debugging
+        console.log("Annual return calculation:", {
+            annualEarnings: summary.projectedAnnualEarnings,
+            portfolioValue: totalPortfolioValue,
+            weeklyReturn: summary.weeklyReturn,
+            annualReturn: summary.projectedAnnualReturn
+        });
+    } else {
+        // Calculate projected annual earnings even if portfolio value is zero
+        summary.projectedAnnualEarnings = summary.totalWeeklyPremium * 52;
     }
     
     console.log("Earnings summary:", summary);
@@ -580,6 +632,47 @@ function updateOptionsTable() {
     if (putCount === 0) {
         updatedPutTableBody.innerHTML = '<tr><td colspan="12" class="text-center">No put options available.</td></tr>';
     }
+    
+    // Add earnings summary table after the options tables
+    const earningsSummary = calculateEarningsSummary(tickersData);
+    
+    // Create a new, more compact earnings summary table
+    const earningsSummaryHTML = `
+        <div class="card shadow-sm mt-4">
+            <div class="card-header d-flex justify-content-between align-items-center bg-light py-2">
+                <h6 class="mb-0">Estimated Earnings Summary</h6>
+            </div>
+            <div class="card-body py-2">
+                <table class="table table-sm table-borderless mb-0">
+                    <tbody>
+                        <tr>
+                            <td width="14%" class="fw-bold">Weekly Premium:</td>
+                            <td width="14%">Calls: ${formatCurrency(earningsSummary.totalWeeklyCallPremium)}</td>
+                            <td width="14%">Puts: ${formatCurrency(earningsSummary.totalWeeklyPutPremium)}</td>
+                            <td width="18%" class="fw-bold">Total: ${formatCurrency(earningsSummary.totalWeeklyPremium)}</td>
+                            <td width="14%" class="fw-bold">Weekly Return:</td>
+                            <td width="12%">${formatPercentage(earningsSummary.weeklyReturn)}</td>
+                            <td width="14%" class="fw-bold text-success">Annual: ${formatPercentage(earningsSummary.projectedAnnualReturn)}</td>
+                        </tr>
+                        <tr>
+                            <td class="fw-bold">Portfolio:</td>
+                            <td>Stock: ${formatCurrency(earningsSummary.portfolioValue)}</td>
+                            <td>Cash: ${formatCurrency(earningsSummary.cashBalance)}</td>
+                            <td>CSP Requirement: ${formatCurrency(earningsSummary.totalPutExerciseCost)}</td>
+                            <td class="fw-bold">Annual Income:</td>
+                            <td colspan="2">${formatCurrency(earningsSummary.projectedAnnualEarnings)}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="card-footer py-1">
+                <small class="text-muted">Projected earnings assume selling the same options weekly for 52 weeks (annualized).</small>
+            </div>
+        </div>
+    `;
+    
+    // Append the earnings summary to the options table container
+    optionsTableContainer.insertAdjacentHTML('beforeend', earningsSummaryHTML);
     
     // Add tab event listeners via the addOptionsTableEventListeners function
     addOptionsTableEventListeners();
