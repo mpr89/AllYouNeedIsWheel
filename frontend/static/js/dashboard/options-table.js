@@ -189,29 +189,29 @@ function calculateEarningsSummary() {
             // Process call options (only for positions with enough shares)
             if (sharesOwned >= 100 && optionData.calls && optionData.calls.length > 0) {
                 const callOption = optionData.calls[0];
-                if (callOption && callOption.ask) {
-                    const callPremiumPerContract = callOption.ask * 100; // Premium per contract (100 shares)
-                    const totalCallPremium = callPremiumPerContract * maxCallContracts;
-                    summary.totalWeeklyCallPremium += totalCallPremium;
-                }
+            if (callOption && callOption.ask) {
+                const callPremiumPerContract = callOption.ask * 100; // Premium per contract (100 shares)
+                const totalCallPremium = callPremiumPerContract * maxCallContracts;
+                summary.totalWeeklyCallPremium += totalCallPremium;
+            }
             }
             
             // Process put options for both regular positions and custom tickers
             if ((sharesOwned >= 100 || isCustomTicker) && optionData.puts && optionData.puts.length > 0) {
                 const putOption = optionData.puts[0];
-                if (putOption && putOption.ask) {
-                    const putPremiumPerContract = putOption.ask * 100;
+            if (putOption && putOption.ask) {
+                const putPremiumPerContract = putOption.ask * 100;
                     
                     // Use custom put quantity if available, otherwise calculate based on shares
                     const customPutQuantity = tickerData.putQuantity || 
                                              (sharesOwned >= 100 ? Math.floor(sharesOwned / 100) : 1);
                     
-                    const totalPutPremium = putPremiumPerContract * customPutQuantity;
-                    summary.totalWeeklyPutPremium += totalPutPremium;
-                    
-                    // Calculate total exercise cost
-                    const putExerciseCost = putOption.strike * customPutQuantity * 100;
-                    summary.totalPutExerciseCost += putExerciseCost;
+                const totalPutPremium = putPremiumPerContract * customPutQuantity;
+                summary.totalWeeklyPutPremium += totalPutPremium;
+                
+                // Calculate total exercise cost
+                const putExerciseCost = putOption.strike * customPutQuantity * 100;
+                summary.totalPutExerciseCost += putExerciseCost;
                 }
             }
         });
@@ -262,8 +262,8 @@ function calculateEarningsSummary() {
         summary.weeklyReturn = (summary.totalWeeklyPremium / totalPortfolioValue) * 100;
         
         // Calculate projected annual earnings (Weekly premium * 52 weeks)
-        summary.projectedAnnualEarnings = summary.totalWeeklyPremium * 52;
-        
+    summary.projectedAnnualEarnings = summary.totalWeeklyPremium * 52;
+    
         // Calculate projected annual return as annual income divided by portfolio value
         summary.projectedAnnualReturn = (summary.projectedAnnualEarnings / totalPortfolioValue) * 100;
         
@@ -408,12 +408,12 @@ function updateOptionsTable() {
                         </div>
                     </div>
                     <div>
-                        <button class="btn btn-sm btn-outline-success me-2" id="sell-all-puts">
-                            <i class="bi bi-check2-all"></i> Sell All
-                        </button>
-                        <button class="btn btn-sm btn-outline-primary" id="refresh-all-puts">
-                            <i class="bi bi-arrow-repeat"></i> Refresh All Puts
-                        </button>
+                    <button class="btn btn-sm btn-outline-success me-2" id="sell-all-puts">
+                        <i class="bi bi-check2-all"></i> Sell All
+                    </button>
+                    <button class="btn btn-sm btn-outline-primary" id="refresh-all-puts">
+                        <i class="bi bi-arrow-repeat"></i> Refresh All Puts
+                    </button>
                     </div>
                 </div>
                 <div class="table-responsive">
@@ -477,8 +477,8 @@ function addOptionsTableEventListeners() {
                 event.preventDefault();
                 tab.show();
                 console.log(`Tab ${tabEl.id} activated via Bootstrap Tab`);
-            });
         });
+    });
     
         console.log('Bootstrap tabs initialized');
     } else {
@@ -514,25 +514,25 @@ function addOptionsTableEventListeners() {
     // Set up container event delegation if not already set up
     if (!containerEventListenersInitialized) {
         console.log('Initializing container event delegation');
-        
-        // Add event delegation for all buttons in the container
-        container.addEventListener('click', async (event) => {
-            // Handle refresh button click
+    
+    // Add event delegation for all buttons in the container
+    container.addEventListener('click', async (event) => {
+        // Handle refresh button click
             if (event.target.classList.contains('refresh-option') || 
                 event.target.closest('.refresh-option')) {
-                
+            
                 const button = event.target.classList.contains('refresh-option') ? 
-                               event.target : 
+                           event.target : 
                                event.target.closest('.refresh-option');
-                
-                const ticker = button.dataset.ticker;
+            
+            const ticker = button.dataset.ticker;
                 const optionType = button.dataset.type; // Get the option type (CALL or PUT)
                 
-                if (ticker) {
-                    button.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Loading...';
-                    button.disabled = true;
-                    
-                    try {
+            if (ticker) {
+                button.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Loading...';
+                button.disabled = true;
+                
+                try {
                         if (optionType) {
                             // If we have an option type, refresh just that type
                             await refreshOptionsForTickerByType(ticker, optionType, true);
@@ -541,36 +541,36 @@ function addOptionsTableEventListeners() {
                             await refreshOptionsForTicker(ticker, true);
                         }
                         button.innerHTML = '<i class="bi bi-arrow-repeat"></i>';
-                    } catch (error) {
-                        console.error('Error refreshing ticker:', error);
-                    } finally {
-                        button.disabled = false;
-                    }
+                } catch (error) {
+                    console.error('Error refreshing ticker:', error);
+                } finally {
+                    button.disabled = false;
                 }
             }
+        }
+        
+        // Handle OTM% refresh button click
+        if (event.target.classList.contains('refresh-otm') || 
+            event.target.closest('.refresh-otm')) {
             
-            // Handle OTM% refresh button click
-            if (event.target.classList.contains('refresh-otm') || 
-                event.target.closest('.refresh-otm')) {
+            const button = event.target.classList.contains('refresh-otm') ? 
+                           event.target : 
+                           event.target.closest('.refresh-otm');
+            
+            const ticker = button.dataset.ticker;
+            if (ticker) {
+                button.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
+                button.disabled = true;
                 
-                const button = event.target.classList.contains('refresh-otm') ? 
-                               event.target : 
-                               event.target.closest('.refresh-otm');
-                
-                const ticker = button.dataset.ticker;
-                if (ticker) {
-                    button.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
-                    button.disabled = true;
-                    
-                    try {
-                        // Find the related input element
-                        const inputGroup = button.closest('.input-group');
-                        const otmInput = inputGroup.querySelector('.otm-input');
-                        const otmPercentage = parseInt(otmInput.value, 10);
+                try {
+                    // Find the related input element
+                    const inputGroup = button.closest('.input-group');
+                    const otmInput = inputGroup.querySelector('.otm-input');
+                    const otmPercentage = parseInt(otmInput.value, 10);
                         const optionType = otmInput.dataset.optionType || 'CALL'; // Get option type from data attribute
-                        
+                    
                         // Update ticker's OTM percentage based on option type
-                        if (tickersData[ticker]) {
+                    if (tickersData[ticker]) {
                             if (optionType === 'CALL') {
                                 tickersData[ticker].callOtmPercentage = otmPercentage;
                                 console.log(`Updated ${ticker} call OTM% to ${otmPercentage}`);
@@ -578,48 +578,48 @@ function addOptionsTableEventListeners() {
                                 tickersData[ticker].putOtmPercentage = otmPercentage;
                                 console.log(`Updated ${ticker} put OTM% to ${otmPercentage}`);
                             }
-                        }
-                        
-                        // Refresh options with the new OTM percentage
-                        await refreshOptionsForTickerByType(ticker, optionType, true);
-                    } catch (error) {
-                        console.error(`Error refreshing ${ticker} with new OTM%:`, error);
-                    } finally {
-                        button.innerHTML = '<i class="bi bi-arrow-repeat"></i>';
-                        button.disabled = false;
                     }
+                    
+                    // Refresh options with the new OTM percentage
+                        await refreshOptionsForTickerByType(ticker, optionType, true);
+                } catch (error) {
+                    console.error(`Error refreshing ${ticker} with new OTM%:`, error);
+                } finally {
+                    button.innerHTML = '<i class="bi bi-arrow-repeat"></i>';
+                    button.disabled = false;
                 }
             }
+        }
+        
+        // Handle sell option button click
+        if (event.target.classList.contains('sell-option') || 
+            event.target.closest('.sell-option')) {
             
-            // Handle sell option button click
-            if (event.target.classList.contains('sell-option') || 
-                event.target.closest('.sell-option')) {
-                
-                const button = event.target.classList.contains('sell-option') ? 
-                               event.target : 
-                               event.target.closest('.sell-option');
-                
-                // Prevent duplicate clicks
-                if (button.disabled) {
-                    console.log('Button already clicked, ignoring');
-                    return;
-                }
-                
-                const ticker = button.dataset.ticker;
-                const optionType = button.dataset.optionType;
-                const strike = button.dataset.strike;
-                const expiration = button.dataset.expiration;
-                
-                if (ticker && optionType && strike && expiration) {
-                    // Create order data
-                    const orderData = {
-                        ticker: ticker,
-                        option_type: optionType,
-                        strike: parseFloat(strike),
-                        expiration: expiration,
-                        action: 'SELL',
-                        quantity: optionType === 'CALL' ? 
-                            Math.floor(tickersData[ticker]?.data?.data?.[ticker]?.position / 100) || 1 :
+            const button = event.target.classList.contains('sell-option') ? 
+                           event.target : 
+                           event.target.closest('.sell-option');
+            
+            // Prevent duplicate clicks
+            if (button.disabled) {
+                console.log('Button already clicked, ignoring');
+                return;
+            }
+            
+            const ticker = button.dataset.ticker;
+            const optionType = button.dataset.optionType;
+            const strike = button.dataset.strike;
+            const expiration = button.dataset.expiration;
+            
+            if (ticker && optionType && strike && expiration) {
+                // Create order data
+                const orderData = {
+                    ticker: ticker,
+                    option_type: optionType,
+                    strike: parseFloat(strike),
+                    expiration: expiration,
+                    action: 'SELL',
+                    quantity: optionType === 'CALL' ? 
+                        Math.floor(tickersData[ticker]?.data?.data?.[ticker]?.position / 100) || 1 :
                             (tickersData[ticker]?.putQuantity || 1),
                         // Include additional data if available
                         bid: button.dataset.bid || 0,
@@ -630,31 +630,31 @@ function addOptionsTableEventListeners() {
                         theta: button.dataset.theta || 0,
                         vega: button.dataset.vega || 0,
                         implied_volatility: button.dataset.implied_volatility || 0
-                    };
+                };
+                
+                try {
+                    // Proceed directly without confirmation dialog
+                    button.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
+                    button.disabled = true;
                     
-                    try {
-                        // Proceed directly without confirmation dialog
-                        button.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
-                        button.disabled = true;
-                        
-                        // Save the order
-                        const result = await saveOptionOrder(orderData);
-                        
-                        if (result && result.order_id) {
-                            console.log(`Order saved successfully! Order ID: ${result.order_id}`);
+                    // Save the order
+                    const result = await saveOptionOrder(orderData);
+                    
+                    if (result && result.order_id) {
+                        console.log(`Order saved successfully! Order ID: ${result.order_id}`);
                             // Trigger refresh of the pending orders table
                             await refreshPendingOrders();
-                        } else {
-                            console.error('Failed to save order');
-                        }
-                    } catch (error) {
-                        console.error('Error saving order:', error);
-                    } finally {
-                        button.innerHTML = 'Sell';
-                        button.disabled = false;
-                    }
+                    } else {
+                        console.error('Failed to save order');
+        }
+    } catch (error) {
+                    console.error('Error saving order:', error);
+                } finally {
+                    button.innerHTML = 'Sell';
+                    button.disabled = false;
                 }
             }
+        }
             
             // Handle sell all calls button click using event delegation
             if (event.target.id === 'sell-all-calls' || 
@@ -812,7 +812,7 @@ function addOptionsTableEventListeners() {
             
             try {
                 await refreshAllOptions();
-            } catch (error) {
+    } catch (error) {
                 console.error('Error refreshing all options:', error);
             } finally {
                 refreshAllButton.innerHTML = '<i class="bi bi-arrow-repeat"></i> Refresh All';
@@ -848,7 +848,7 @@ function addOptionsTableEventListeners() {
             
             try {
                 await refreshAllOptions('PUT');
-            } catch (error) {
+        } catch (error) {
                 console.error('Error refreshing all put options:', error);
             } finally {
                 refreshAllPutsButton.innerHTML = '<i class="bi bi-arrow-repeat"></i> Refresh All Puts';
@@ -1007,21 +1007,21 @@ async function refreshOptionsForTicker(ticker, updateUI = false) {
         if (!tickersData[ticker]) {
             console.log(`Initializing data structure for ${ticker}`);
             tickersData[ticker] = {
-                data: {
-                    data: {}
+            data: {
+                data: {}
                 },
                 callOtmPercentage: callOtmPercentage,
                 putOtmPercentage: putOtmPercentage,
                 putQuantity: 1
-            };
-            
+        };
+        
             // Initialize the ticker data structure
             tickersData[ticker].data.data[ticker] = {
-                stock_price: 0,
-                position: 0,
-                calls: [],
-                puts: []
-            };
+            stock_price: 0,
+            position: 0,
+            calls: [],
+            puts: []
+        };
         }
         
         // Merge call and put option data
@@ -1072,12 +1072,12 @@ async function refreshOptionsForTicker(ticker, updateUI = false) {
                     callSection.classList.remove('show', 'active');
                 }
             }
-            
-            // Update the UI
-            updateOptionsTable();
-            
-            // Make sure event listeners are added
-            addOptionsTableEventListeners();
+        
+        // Update the UI
+        updateOptionsTable();
+        
+        // Make sure event listeners are added
+        addOptionsTableEventListeners();
         }
         
     } catch (error) {
@@ -1105,8 +1105,8 @@ async function refreshAllOptions(optionType) {
         console.log("Put tab was active before refresh:", putTabWasActive);
         
         // Get list of tickers to refresh
-        const tickers = Object.keys(tickersData);
-        if (tickers.length === 0) {
+    const tickers = Object.keys(tickersData);
+    if (tickers.length === 0) {
             const tickersResult = await fetchTickers();
             if (tickersResult && tickersResult.tickers) {
                 tickers.push(...tickersResult.tickers);
@@ -1190,7 +1190,7 @@ async function refreshAllOptions(optionType) {
         // Make sure event listeners are added
         addOptionsTableEventListeners();
         
-    } catch (error) {
+            } catch (error) {
         console.error(`Error refreshing ${optionType || 'all'} options:`, error);
         showAlert(`Error refreshing options: ${error.message}`, 'danger');
         
@@ -1255,7 +1255,7 @@ async function refreshOptionsForTickerByType(ticker, optionType, updateUI = fals
             // Update the specific option type data
             if (optionType === 'CALL') {
                 tickersData[ticker].data.data[ticker].calls = optionData.data[ticker].calls || [];
-            } else {
+    } else {
                 tickersData[ticker].data.data[ticker].puts = optionData.data[ticker].puts || [];
             }
         }
@@ -1447,66 +1447,66 @@ async function sellAllOptions(optionType) {
     }
     
     try {
-        for (const ticker of tickers) {
-            const tickerData = tickersData[ticker];
-            
-            // Skip tickers without data
-            if (!tickerData || !tickerData.data || !tickerData.data.data || !tickerData.data.data[ticker]) {
-                console.log(`Skipping ticker ${ticker} - missing or invalid data`);
-                continue;
-            }
-            
-            const optionData = tickerData.data.data[ticker];
-            
+    for (const ticker of tickers) {
+        const tickerData = tickersData[ticker];
+        
+        // Skip tickers without data
+        if (!tickerData || !tickerData.data || !tickerData.data.data || !tickerData.data.data[ticker]) {
+            console.log(`Skipping ticker ${ticker} - missing or invalid data`);
+            continue;
+        }
+        
+        const optionData = tickerData.data.data[ticker];
+        
             // For CALL options, skip positions with less than 100 shares (can't sell covered calls)
-            const sharesOwned = optionData.position || 0;
+        const sharesOwned = optionData.position || 0;
             if (optionType === 'CALL' && sharesOwned < 100) {
                 console.log(`Skipping ticker ${ticker} - insufficient shares for calls: ${sharesOwned}`);
-                continue;
-            }
-            
-            // Get the options based on type
-            let options = [];
-            if (optionType === 'CALL' && optionData.calls && optionData.calls.length > 0) {
-                options = optionData.calls;
-                console.log(`Found ${options.length} CALL options for ${ticker}`);
-            } else if (optionType === 'PUT' && optionData.puts && optionData.puts.length > 0) {
-                options = optionData.puts;
-                console.log(`Found ${options.length} PUT options for ${ticker}`);
-            } else {
-                console.log(`No ${optionType} options found for ${ticker}`);
-                continue;
-            }
-            
-            // Skip if no options available
-            if (options.length === 0) {
-                console.log(`No ${optionType} options available for ${ticker}`);
-                continue;
-            }
-            
-            // Use the first option (best match)
-            const option = options[0];
-            if (!option) {
-                console.log(`Invalid option data for ${ticker}`);
-                continue;
-            }
+            continue;
+        }
+        
+        // Get the options based on type
+        let options = [];
+        if (optionType === 'CALL' && optionData.calls && optionData.calls.length > 0) {
+            options = optionData.calls;
+            console.log(`Found ${options.length} CALL options for ${ticker}`);
+        } else if (optionType === 'PUT' && optionData.puts && optionData.puts.length > 0) {
+            options = optionData.puts;
+            console.log(`Found ${options.length} PUT options for ${ticker}`);
+        } else {
+            console.log(`No ${optionType} options found for ${ticker}`);
+            continue;
+        }
+        
+        // Skip if no options available
+        if (options.length === 0) {
+            console.log(`No ${optionType} options available for ${ticker}`);
+            continue;
+        }
+        
+        // Use the first option (best match)
+        const option = options[0];
+        if (!option) {
+            console.log(`Invalid option data for ${ticker}`);
+            continue;
+        }
             
             // Update UI with current ticker
             if (button) {
                 button.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Processing ${ticker}...`;
             }
-            
-            console.log(`Processing order for ${ticker} ${optionType} option: ${option.strike} ${option.expiration}`);
-            
-            // Create order data
-            const orderData = {
-                ticker: ticker,
-                option_type: optionType,
-                strike: parseFloat(option.strike),
-                expiration: option.expiration,
-                action: 'SELL',
-                quantity: optionType === 'CALL' ? 
-                    Math.floor(sharesOwned / 100) : 
+        
+        console.log(`Processing order for ${ticker} ${optionType} option: ${option.strike} ${option.expiration}`);
+        
+        // Create order data
+        const orderData = {
+            ticker: ticker,
+            option_type: optionType,
+            strike: parseFloat(option.strike),
+            expiration: option.expiration,
+            action: 'SELL',
+            quantity: optionType === 'CALL' ? 
+                Math.floor(sharesOwned / 100) : 
                     (tickerData.putQuantity || 1),
                 // Include additional data if available
                 bid: option.bid || 0,
@@ -1517,41 +1517,41 @@ async function sellAllOptions(optionType) {
                 theta: option.theta || 0,
                 vega: option.vega || 0,
                 implied_volatility: option.implied_volatility || 0
-            };
+        };
+        
+        console.log(`Order data:`, orderData);
+        
+        try {
+            // Save the order
+            const result = await saveOptionOrder(orderData);
             
-            console.log(`Order data:`, orderData);
-            
-            try {
-                // Save the order
-                const result = await saveOptionOrder(orderData);
-                
-                if (result && result.order_id) {
-                    console.log(`Order saved successfully for ${ticker} ${optionType} ${option.strike} ${option.expiration}! Order ID: ${result.order_id}`);
-                    successOrders.push(`${ticker} ${optionType} ${option.strike} ${option.expiration}`);
-                } else {
-                    console.error(`Failed to save order for ${ticker} ${optionType} ${option.strike} ${option.expiration}`);
-                    failedOrders.push(`${ticker} ${optionType} ${option.strike} ${option.expiration}`);
-                }
-            } catch (error) {
-                console.error(`Error saving order for ${ticker}:`, error);
+            if (result && result.order_id) {
+                console.log(`Order saved successfully for ${ticker} ${optionType} ${option.strike} ${option.expiration}! Order ID: ${result.order_id}`);
+                successOrders.push(`${ticker} ${optionType} ${option.strike} ${option.expiration}`);
+            } else {
+                console.error(`Failed to save order for ${ticker} ${optionType} ${option.strike} ${option.expiration}`);
                 failedOrders.push(`${ticker} ${optionType} ${option.strike} ${option.expiration}`);
             }
+        } catch (error) {
+            console.error(`Error saving order for ${ticker}:`, error);
+            failedOrders.push(`${ticker} ${optionType} ${option.strike} ${option.expiration}`);
+        }
             
             // Small delay to prevent overwhelming the server
             await new Promise(resolve => setTimeout(resolve, 100));
-        }
-        
-        // Log results
-        console.log(`Sell all ${optionType} orders results:`, {
-            successful: successOrders.length,
-            failed: failedOrders.length,
-            successDetails: successOrders,
-            failDetails: failedOrders
-        });
-        
-        if (failedOrders.length > 0) {
-            console.error(`${failedOrders.length} orders failed to be created`);
-        }
+    }
+    
+    // Log results
+    console.log(`Sell all ${optionType} orders results:`, {
+        successful: successOrders.length,
+        failed: failedOrders.length,
+        successDetails: successOrders,
+        failDetails: failedOrders
+    });
+    
+    if (failedOrders.length > 0) {
+        console.error(`${failedOrders.length} orders failed to be created`);
+    }
         
         // Reset the button state
         if (button) {
@@ -1584,8 +1584,8 @@ async function sellAllOptions(optionType) {
         } else {
             showAlert(`No ${optionType.toLowerCase()} option orders were created`, 'warning');
         }
-        
-        return successOrders.length;
+    
+    return successOrders.length;
     } catch (error) {
         console.error(`Error in sellAllOptions for ${optionType}:`, error);
         
