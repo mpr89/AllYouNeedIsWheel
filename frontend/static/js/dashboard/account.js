@@ -44,12 +44,23 @@ function updateAccountSummary() {
         accountValueElement.textContent = formatCurrency(accountData.account_value || 0);
     }
     
-    // Update daily change
-    const dailyChangeElement = document.getElementById('daily-change');
+    // Update daily change - use daily_pnl instead of unrealized_pnl
+    const dailyChangeElement = document.getElementById('daily-change-badge');
     if (dailyChangeElement) {
-        const changeClass = (accountData.unrealized_pnl || 0) >= 0 ? 'text-success' : 'text-danger';
-        dailyChangeElement.className = changeClass;
-        dailyChangeElement.textContent = `${formatPercentage(accountData.unrealized_pnl || 0)} today`;
+        const dailyPnl = accountData.daily_pnl || 0;
+        // Log the received P&L value for debugging
+        console.log(`Daily P&L received from backend: ${dailyPnl.toFixed(2)}%`);
+        
+        // Preserve the sign as received from the backend
+        const isPositive = dailyPnl >= 0;
+        const badgeClass = isPositive ? 'bg-success' : 'bg-danger';
+        dailyChangeElement.className = `badge rounded-pill px-3 py-2 ${badgeClass}`;
+        dailyChangeElement.textContent = `${formatPercentage(dailyPnl)} today`;
+        
+        // Additional check for visibility purposes
+        if (dailyPnl < 0) {
+            console.log(`Negative daily P&L detected: ${dailyPnl.toFixed(2)}%`);
+        }
     }
     
     // Update cash balance
@@ -62,6 +73,45 @@ function updateAccountSummary() {
     const positionsCountElement = document.getElementById('positions-count');
     if (positionsCountElement) {
         positionsCountElement.textContent = accountData.positions_count || 0;
+    }
+    
+    // Update new margin metrics
+    
+    // Excess Liquidity
+    const excessLiquidityElement = document.getElementById('excess-liquidity');
+    if (excessLiquidityElement) {
+        excessLiquidityElement.textContent = formatCurrency(accountData.excess_liquidity || 0);
+    }
+    
+    // Initial Margin
+    const initialMarginElement = document.getElementById('initial-margin');
+    if (initialMarginElement) {
+        initialMarginElement.textContent = formatCurrency(accountData.initial_margin || 0);
+    }
+    
+    // Leverage Percentage
+    const leveragePercentageElement = document.getElementById('leverage-percentage');
+    if (leveragePercentageElement) {
+        leveragePercentageElement.textContent = formatPercentage(accountData.leverage_percentage || 0);
+    }
+    
+    // Update the leverage progress bar
+    const leverageBar = document.getElementById('leverage-bar');
+    if (leverageBar) {
+        const leveragePercentage = accountData.leverage_percentage || 0;
+        
+        // Set the width of the progress bar
+        leverageBar.style.width = `${Math.min(100, leveragePercentage)}%`;
+        leverageBar.setAttribute('aria-valuenow', Math.min(100, leveragePercentage));
+        
+        // Update the color based on leverage level
+        if (leveragePercentage < 30) {
+            leverageBar.className = 'progress-bar bg-success'; // Low leverage - green
+        } else if (leveragePercentage < 60) {
+            leverageBar.className = 'progress-bar bg-warning'; // Medium leverage - yellow
+        } else {
+            leverageBar.className = 'progress-bar bg-danger';  // High leverage - red
+        }
     }
 }
 
