@@ -1887,11 +1887,17 @@ function addTickerRowToTable(tableId, optionType, ticker) {
                 <td class="align-middle total-premium">$ 0.00</td>
                 <td class="align-middle return-on-cash">0.00%</td>
                 <td class="align-middle cash-required">$ 0.00</td>
-                <td class="align-middle">
-                    <button class="btn btn-sm btn-outline-secondary refresh-option" 
+                <td class="align-middle d-flex">
+                    <button class="btn btn-sm btn-outline-secondary refresh-option me-2" 
                         data-ticker="${ticker}" 
                         data-type="PUT">
                         <i class="bi bi-arrow-repeat"></i> Refresh
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger delete-ticker" 
+                        data-ticker="${ticker}" 
+                        data-bs-toggle="tooltip" 
+                        title="Remove ticker">
+                        <i class="bi bi-x"></i>
                     </button>
                 </td>
             `;
@@ -1950,13 +1956,19 @@ function addTickerRowToTable(tableId, optionType, ticker) {
             <td class="align-middle">${maxContracts}</td>
             <td class="align-middle">$ ${totalPremium.toFixed(2)}</td>
             <td class="align-middle">${returnOnCapital.toFixed(2)}%</td>
-            <td class="align-middle">
-                <button class="btn btn-sm btn-outline-success sell-option" 
+            <td class="align-middle d-flex">
+                <button class="btn btn-sm btn-outline-success sell-option me-2" 
                     data-ticker="${ticker}" 
                     data-option-type="CALL" 
                     data-strike="${option.strike || 0}" 
                     data-expiration="${option.expiration || ''}">
                     <i class="bi bi-check-circle"></i> Sell
+                </button>
+                <button class="btn btn-sm btn-outline-danger delete-ticker" 
+                    data-ticker="${ticker}" 
+                    data-bs-toggle="tooltip" 
+                    title="Remove ticker">
+                    <i class="bi bi-x"></i>
                 </button>
             </td>
         `;
@@ -1970,9 +1982,6 @@ function addTickerRowToTable(tableId, optionType, ticker) {
         row.innerHTML = `
             <td class="align-middle">
                 ${ticker}
-                <button class="btn btn-sm btn-outline-danger ms-2 delete-ticker" data-ticker="${ticker}">
-                    <i class="bi bi-trash"></i>
-                </button>
             </td>
             <td class="align-middle">${stockPrice ? '$ ' + stockPrice.toFixed(2) : 'N/A'}</td>
             <td class="align-middle">
@@ -2006,13 +2015,19 @@ function addTickerRowToTable(tableId, optionType, ticker) {
             <td class="align-middle cash-required">
                 $ ${((option.strike || 0) * 100 * putQuantity).toFixed(2)}
             </td>
-            <td class="align-middle">
-                <button class="btn btn-sm btn-outline-success sell-option" 
+            <td class="align-middle d-flex">
+                <button class="btn btn-sm btn-outline-success sell-option me-2" 
                     data-ticker="${ticker}" 
                     data-option-type="PUT" 
                     data-strike="${option.strike || 0}" 
                     data-expiration="${option.expiration || ''}">
                     <i class="bi bi-check-circle"></i> Sell
+                </button>
+                <button class="btn btn-sm btn-outline-danger delete-ticker" 
+                    data-ticker="${ticker}" 
+                    data-bs-toggle="tooltip" 
+                    title="Remove ticker">
+                    <i class="bi bi-x"></i>
                 </button>
             </td>
         `;
