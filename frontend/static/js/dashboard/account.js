@@ -44,25 +44,6 @@ function updateAccountSummary() {
         accountValueElement.textContent = formatCurrency(accountData.account_value || 0);
     }
     
-    // Update daily change - use daily_pnl instead of unrealized_pnl
-    const dailyChangeElement = document.getElementById('daily-change-badge');
-    if (dailyChangeElement) {
-        const dailyPnl = accountData.daily_pnl || 0;
-        // Log the received P&L value for debugging
-        console.log(`Daily P&L received from backend: ${dailyPnl.toFixed(2)}%`);
-        
-        // Preserve the sign as received from the backend
-        const isPositive = dailyPnl >= 0;
-        const badgeClass = isPositive ? 'bg-success' : 'bg-danger';
-        dailyChangeElement.className = `badge rounded-pill px-3 py-2 ${badgeClass}`;
-        dailyChangeElement.textContent = `${formatPercentage(dailyPnl)} today`;
-        
-        // Additional check for visibility purposes
-        if (dailyPnl < 0) {
-            console.log(`Negative daily P&L detected: ${dailyPnl.toFixed(2)}%`);
-        }
-    }
-    
     // Update cash balance
     const cashBalanceElement = document.getElementById('cash-balance');
     if (cashBalanceElement) {

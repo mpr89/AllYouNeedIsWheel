@@ -350,7 +350,10 @@ class IBConnection:
                     ticker = self.ib.reqMktData(qualified_contract, '', True, False)  # Add genericTickList='Greeks' to get Greeks
                     
                     # Wait for data to arrive - give more time for Greeks
-                    self.ib.sleep(0.2)
+                    for _ in range(20):
+                        self.ib.sleep(0.05)
+                        if ticker.modelGreeks:
+                            break
                     
                     # Extract market data
                     bid = ticker.bid if hasattr(ticker, 'bid') and ticker.bid is not None and ticker.bid > 0 else 0
