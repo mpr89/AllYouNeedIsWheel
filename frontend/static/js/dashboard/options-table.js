@@ -2383,6 +2383,10 @@ async function loadTickers() {
         document.querySelector('#put-options-table tbody').appendChild(row);
     }
     
+    // Calculate and display earnings summary once after all tickers are processed
+    const earningsSummary = calculateEarningsSummary();
+    displayEarningsSummary(earningsSummary);
+    
     console.log("All ticker data loaded and table updated incrementally");
 }
 
@@ -2402,6 +2406,12 @@ export {
 function displayEarningsSummary(summary) {
     const optionsTableContainer = document.getElementById('options-table-container');
     if (!optionsTableContainer) return;
+    
+    // Remove any existing earnings summary to prevent duplicates
+    const existingSummary = optionsTableContainer.querySelector('.card.shadow-sm.mt-4');
+    if (existingSummary) {
+        existingSummary.remove();
+    }
     
     // Create a new, more compact earnings summary table
     const earningsSummaryHTML = `
