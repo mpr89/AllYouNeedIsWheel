@@ -230,10 +230,10 @@ function updateFilledOrdersTable() {
     // Check if we have positions data
     if (!weeklyOptionIncomeData.positions || weeklyOptionIncomeData.positions.length === 0) {
         console.log('No weekly option income data to display');
-        filledOrdersTable.innerHTML = '<tr><td colspan="9" class="text-center">No positions expiring this coming Friday found</td></tr>';
+        filledOrdersTable.innerHTML = '<tr><td colspan="10" class="text-center">No positions expiring this coming Friday found</td></tr>';
         
         // Update summary with zeros
-        updateWeeklyEarningsSummary([], 0);
+        updateWeeklyEarningsSummary([], 0, 0);
         return;
     }
     
@@ -260,6 +260,12 @@ function updateFilledOrdersTable() {
         // Get option type full name
         const optionType = position.option_type === 'C' ? 'CALL' : (position.option_type === 'P' ? 'PUT' : position.option_type);
         
+        // Calculate and format notional value for PUT options
+        let notionalValue = '-';
+        if (optionType === 'PUT' && position.notional_value) {
+            notionalValue = formatCurrency(position.notional_value);
+        }
+        
         // Create the row HTML
         row.innerHTML = `
             <td>${position.symbol}</td>
@@ -270,6 +276,7 @@ function updateFilledOrdersTable() {
             <td>${position.position}</td>
             <td>-</td>
             <td>${incomeFormatted}</td>
+            <td>${notionalValue}</td>
             <td>Expires Next Friday</td>
         `;
         
@@ -277,15 +284,16 @@ function updateFilledOrdersTable() {
     });
     
     // Update the weekly earnings summary
-    updateWeeklyEarningsSummary(positions, weeklyOptionIncomeData.total_income || 0);
+    updateWeeklyEarningsSummary(positions, weeklyOptionIncomeData.total_income || 0, weeklyOptionIncomeData.total_put_notional || 0);
 }
 
 /**
  * Update the weekly earnings summary display
  * @param {Array} positions - Array of positions expiring this coming Friday
  * @param {number} totalIncome - Total income from these positions
+ * @param {number} totalPutNotional - Total notional value if all PUTs are assigned
  */
-function updateWeeklyEarningsSummary(positions, totalIncome) {
+function updateWeeklyEarningsSummary(positions, totalIncome, totalPutNotional) {
     const positionCount = positions.length;
     const averageIncome = positionCount > 0 ? totalIncome / positionCount : 0;
     
@@ -293,11 +301,12 @@ function updateWeeklyEarningsSummary(positions, totalIncome) {
     document.getElementById('weekly-earnings-total').textContent = formatCurrency(totalIncome);
     document.getElementById('weekly-order-count').textContent = positionCount;
     document.getElementById('weekly-average-premium').textContent = formatCurrency(averageIncome);
+    document.getElementById('weekly-notional-value').textContent = formatCurrency(totalPutNotional);
     
     // Add footer info about next Friday expiration date
     const footerInfo = document.querySelector('.card-footer small.text-muted');
     if (footerInfo && weeklyOptionIncomeData.this_friday) {
-        footerInfo.textContent = `Short option positions expiring this coming Friday (${weeklyOptionIncomeData.this_friday}) and estimated income.`;
+        footerInfo.textContent = `Short option positions expiring this coming Friday (${weeklyOptionIncomeData.this_friday}). Total PUT notional value if assigned: ${formatCurrency(totalPutNotional)}`;
     }
 }
 

@@ -67,17 +67,18 @@
                                 <th>Quantity</th>
                                 <th>Commission</th>
                                 <th>Total Income</th>
+                                <th>Notional Value</th>
                                 <th>Status</th>
                             </tr>
                         </thead>
                         <tbody id="filled-orders-table">
                             <tr>
-                                <td colspan="9" class="text-center">Loading short options expiring this Friday...</td>
+                                <td colspan="10" class="text-center">Loading short options expiring this Friday...</td>
                             </tr>
                         </tbody>
                         <tfoot class="table-dark">
                             <tr id="weekly-earnings-summary">
-                                <td colspan="9" class="text-center">
+                                <td colspan="10" class="text-center">
                                     <div class="d-flex justify-content-around align-items-center py-2">
                                         <div class="text-center">
                                             <h6 class="mb-0">Weekly Income</h6>
@@ -90,6 +91,10 @@
                                         <div class="text-center">
                                             <h6 class="mb-0">Average Income/Position</h6>
                                             <span class="fs-5 fw-bold" id="weekly-average-premium">$0.00</span>
+                                        </div>
+                                        <div class="text-center">
+                                            <h6 class="mb-0">Total PUT Notional</h6>
+                                            <span class="fs-5 fw-bold" id="weekly-notional-value">$0.00</span>
                                         </div>
                                     </div>
                                 </td>

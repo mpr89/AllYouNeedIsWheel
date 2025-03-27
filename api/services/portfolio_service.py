@@ -509,6 +509,13 @@ class PortfolioService:
                                 'income': income  # Total premium collected
                             }
                             
+                            # Calculate notional value for PUT options (this is the cash needed if assigned)
+                            if contract.right == 'P':
+                                # Notional value = strike price × number of contracts × 100 shares per contract
+                                notional_value = float(contract.strike) * num_contracts * 100
+                                option_data['notional_value'] = notional_value
+                                logger.debug(f"PUT option notional value if assigned: ${notional_value:.2f}")
+                            
                             weekly_options.append(option_data)
                             total_income += income
                             
@@ -517,13 +524,18 @@ class PortfolioService:
                     logger.error(f"Error processing option position {position_key}: {str(pos_error)}")
                     # Continue with next position
             
+            # Calculate total notional value for all PUT options
+            total_put_notional = sum(opt.get('notional_value', 0) for opt in weekly_options if opt.get('option_type') == 'P')
+            logger.info(f"Total notional value for PUT options: ${total_put_notional:.2f}")
+            
             logger.info(f"Found {len(weekly_options)} short option positions expiring this Friday with total income: ${total_income:.2f}")
             
             return {
                 'positions': weekly_options,
                 'total_income': total_income,
                 'positions_count': len(weekly_options),
-                'this_friday': this_friday_str
+                'this_friday': this_friday_str,
+                'total_put_notional': total_put_notional
             }
             
         except Exception as e:
