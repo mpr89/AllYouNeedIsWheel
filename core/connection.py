@@ -236,7 +236,7 @@ class IBConnection:
                 logger.error(f"Error getting {symbol} price: {error_msg}")
             return None
   
-    def get_option_chain(self, symbol, expiration=None, right='C', target_strike=None, exchange='SMART'):
+    def get_option_chain(self, symbol, expiration=None, right='C', target_strike=None, exchange='CBOE'):
         """
         Get option chain data for a stock, filtered to a specific expiration date and closest strike price
         
@@ -284,7 +284,6 @@ class IBConnection:
             if not chain:
                 logger.error(f"No option chain found for {symbol} on exchange {exchange}")
                 return None
-            
             # Filter available expirations if a specific one is requested
             available_expirations = chain.expirations
             if expiration:
@@ -304,7 +303,6 @@ class IBConnection:
                     return None
             
             strikes = chain.strikes
-            
             # If target_strike is provided, find the closest strike
             if target_strike is not None and strikes:
                 logger.info(f"Finding strike closest to {target_strike} for {symbol}")
@@ -348,11 +346,11 @@ class IBConnection:
                     
                     # Request market data with model computation
                     ticker = self.ib.reqMktData(qualified_contract, '', True, False)  # Add genericTickList='Greeks' to get Greeks
-                    
+                   
                     # Wait for data to arrive - give more time for Greeks
                     for _ in range(20):
-                        self.ib.sleep(0.05)
-                        if ticker.modelGreeks:
+                        self.ib.sleep(0.1)
+                        if ticker.modelGreeks is not None and ticker.ask is not None:
                             break
                     
                     # Extract market data
@@ -379,22 +377,6 @@ class IBConnection:
                     else:
                         logger.debug(f"No model greeks available for {contract.symbol} {contract.right} {contract.strike}")
                         
-                        # Fall back to estimate for delta if not available from TWS
-                        atm_factor = 1.0 - min(1.0, abs(stock_price - contract.strike) / stock_price)
-                        
-                        if contract.right == 'C':
-                            if contract.strike < stock_price:
-                                delta = 0.5 + (0.5 * atm_factor)
-                            else:
-                                delta = 0.5 * (1 - atm_factor)
-                        else:  # Put
-                            if contract.strike > stock_price:
-                                delta = -0.5 - (0.5 * atm_factor)
-                            else:
-                                delta = -0.5 * (1 - atm_factor)
-                        
-                        logger.debug(f"Using estimated delta for {contract.symbol} {contract.right} {contract.strike}: delta={delta}")
-                    
                     # Create option data dictionary
                     option_data = {
                         'strike': contract.strike,
