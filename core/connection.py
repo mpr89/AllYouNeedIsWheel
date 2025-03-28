@@ -192,7 +192,6 @@ class IBConnection:
             
             # Wait for market data to be received
             self.ib.sleep(0.2)
-            print(f"Ticker: {ticker}")
             # Get the last price
             last_price = ticker.last if ticker.last else (ticker.close if ticker.close else None)
             bid_price = ticker.bid if ticker.bid else None
@@ -236,7 +235,7 @@ class IBConnection:
                 logger.error(f"Error getting {symbol} price: {error_msg}")
             return None
   
-    def get_option_chain(self, symbol, expiration=None, right='C', target_strike=None, exchange='CBOE'):
+    def get_option_chain(self, symbol, expiration=None, right='C', target_strike=None, exchange='SMART'):
         """
         Get option chain data for a stock, filtered to a specific expiration date and closest strike price
         
@@ -280,27 +279,11 @@ class IBConnection:
                 logger.error(f"No option chain found for {symbol}")
                 return None
             
-            chain = next((c for c in chains if c.exchange == exchange), None)
+            chain = next((c for c in chains if c.exchange == exchange and expiration in c.expirations), None)
+            
             if not chain:
                 logger.error(f"No option chain found for {symbol} on exchange {exchange}")
                 return None
-            # Filter available expirations if a specific one is requested
-            available_expirations = chain.expirations
-            if expiration:
-                if expiration in available_expirations:
-                    logger.info(f"Using requested expiration date: {expiration}")
-                    expirations = [expiration]
-                else:
-                    chain = next((c for c in chains if c.exchange == 'CBOE'), None)
-                    expirations = [expiration]
-            else:
-                # If no expiration provided, use the first available one
-                if available_expirations:
-                    expirations = [available_expirations[0]]
-                    logger.info(f"No expiration specified, using first available: {expirations[0]}")
-                else:
-                    logger.error(f"No expirations available for {symbol}")
-                    return None
             
             strikes = chain.strikes
             # If target_strike is provided, find the closest strike
@@ -312,12 +295,12 @@ class IBConnection:
             
             # Build option contracts
             option_contracts = []
-            for exp in expirations:
-                for strike in strikes:
-                    option = Option(symbol, exp, strike, right, exchange)
-                    option.currency = 'USD'
-                    option.multiplier = '100'  # Standard for equity options
-                    option_contracts.append(option)
+            for strike in strikes:
+                option = Option(symbol, expiration, strike, right, exchange)
+                option.currency = 'USD'
+                option.multiplier = '100'  # Standard for equity options
+                option_contracts.append(option)
+                
             
             # Get market data for the options
             logger.info(f"Requesting market data for {len(option_contracts)} option contracts")
@@ -325,7 +308,7 @@ class IBConnection:
             # Initialize result structure
             result = {
                 'symbol': symbol,
-                'expiration': expirations[0],  # Just use the first one since we're filtering
+                'expiration': expiration,  # Just use the first one since we're filtering
                 'stock_price': stock_price,
                 'right': right,
                 'options': []
