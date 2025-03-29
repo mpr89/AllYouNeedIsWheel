@@ -294,21 +294,7 @@ class OptionsService:
         Returns:
             float: Adjusted standard strike price
         """
-        if price < 5:
-            # $0.50 increments for stocks under $5
-            return round(price * 2) / 2
-        elif price < 25:
-            # $1 increments for stocks $5-$25
-            return round(price)
-        elif price < 100:
-            # $2.50 increments for stocks $25-$100
-            return round(price / 2.5) * 2.5
-        elif price < 250:
-            # $5 increments for stocks $100-$250
-            return round(price / 5) * 5
-        else:
-            # $10 increments for stocks over $250
-            return round(price / 10) * 10
+        return round(price)
       
     def execute_order(self, order_id, db):
         """

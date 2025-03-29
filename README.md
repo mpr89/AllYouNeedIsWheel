@@ -1,133 +1,191 @@
-# Auto-Trader
+# AllYouNeedIsWheel
 
-Auto-Trader is a financial options trading assistant that helps analyze, visualize, and recommend option trading strategies. It connects to Interactive Brokers TWS/IB Gateway, retrieves portfolio data, analyzes options, and presents recommendations through a user-friendly web interface.
+AllYouNeedIsWheel is a financial options trading assistant that connects to Interactive Brokers (IB) to help analyze, visualize, and recommend option trading strategies. It retrieves portfolio data, analyzes options chains, and presents recommendations through a user-friendly web interface.
 
 ## Features
 
 - **Portfolio Dashboard**: View your current portfolio positions, value, and performance metrics
 - **Options Analysis**: Analyze option chains for any stock ticker
-- **Trading Recommendations**: Get AI-powered option trade recommendations
+- **Trading Recommendations**: Get option trade recommendations
 - **Interactive Web Interface**: Modern, responsive web application with data visualizations
 - **API Integration**: Backend API to interact with Interactive Brokers
 - **Order Management**: Create, cancel, and execute option orders through the dashboard
 
-## Architecture
+## Prerequisites
 
-The application consists of:
-
-1. **Core Libraries** (`autotrader/core/`): Connection to IB TWS, data processing, and analysis
-2. **Database Module** (`autotrader/db/`): SQLite database for storing trade data and history
-3. **API Backend** (`api/`): Flask-based REST API serving data to the frontend
-4. **Web Frontend** (`frontend/`): HTML/CSS/JS browser interface for visualization
+- Python 3.7+
+- Interactive Brokers TWS (Trader Workstation) or IB Gateway
+- IB account with market data subscriptions for options
 
 ## Installation
 
 1. Clone this repository:
-   ```
-   git clone <repository-url>
-   cd auto-trader
+   ```bash
+   git clone https://github.com/yourusername/AllYouNeedIsWheel.git
+   cd AllYouNeedIsWheel
    ```
 
 2. Install required dependencies:
-   ```
+   ```bash
    pip install -r requirements.txt
    ```
 
-3. Make sure Interactive Brokers TWS/IB Gateway is running with API connections enabled.
+3. Create your connection configuration file:
+   ```bash
+   cp connection.json.example connection.json
+   ```
+
+4. Edit `connection.json` with your Interactive Brokers connection details:
+   ```json
+   {
+       "host": "127.0.0.1",
+       "port": 7497,
+       "client_id": 1,
+       "readonly": true,
+       "account_id": "YOUR_ACCOUNT_ID",
+       "db_path": "options_dev.db",
+       "comment": "Port 7496 for TWS, 7497 for IB Gateway. Set readonly to true for safety during testing."
+   }
+   ```
 
 ## Configuration
 
-Create a `.env` file in the root directory with the following settings:
+Two connection files can be maintained:
+- `connection.json` - For paper trading (default)
+- `connection_real.json` - For real-money trading
 
-```
-IB_HOST=127.0.0.1
-IB_PORT=7497
-IB_CLIENT_ID=1
-IB_READONLY=True
-
-LOG_LEVEL=INFO
-REPORT_DIR=reports
-```
-
-Alternatively, create a `connection.json` file to configure the Interactive Brokers connection:
-
-```json
-{
-    "host": "127.0.0.1",
-    "port": 7497,
-    "client_id": 1,
-    "readonly": false,
-    "account_id": "YOUR_ACCOUNT_ID"
-}
-```
-
-A template file `connection.json.example` is included for reference.
+The key configuration parameters are:
+- `host`: Usually "127.0.0.1" for local TWS/IB Gateway
+- `port`: 7497 for IB Gateway paper trading, 7496 for TWS live trading
+- `client_id`: Unique client ID (important if you have multiple connections)
+- `readonly`: Set to `true` to prevent actual order execution (safer for testing)
+- `db_path`: Path to the SQLite database file
 
 ## Usage
 
-### Starting the Web Application
+### Starting the Development Server
 
-Run the Flask web server:
+Run the Flask development server:
 
-```
+```bash
 python app.py
 ```
 
 This will start the application on http://localhost:5000
 
+### Starting the Production API Server
+
+For production use with Gunicorn (recommended for deployment):
+
+```bash
+# For paper trading (default)
+python run_api.py
+
+# For real money trading
+python run_api.py --realmoney
+```
+
+By default, the server will run on port 5000 with 4 workers. You can change these settings with environment variables:
+
+```bash
+# Change port and worker count
+PORT=8080 WORKERS=2 python run_api.py
+```
+
 ### API Endpoints
 
-- **Portfolio Data**: GET `/api/portfolio/`
-- **Option Chains**: GET `/api/options/<ticker>`
-- **Recommendations**: GET `/api/recommendations/`
+- **Portfolio**: 
+  - GET `/api/portfolio/` - Get current portfolio positions and account data
+
+- **Options**:
+  - GET `/api/options/<ticker>` - Get option chain for ticker
+  - GET `/api/options/<ticker>/<expiration>` - Get option chain for specific expiration date
+
 - **Orders**:
-  - GET `/api/options/orders`: Get orders with optional filters
-  - POST `/api/options/order`: Create a new order
-  - DELETE `/api/options/order/<order_id>`: Cancel an order
-  - PUT `/api/options/order/<order_id>`: Update an order status
-  - POST `/api/options/execute/<order_id>`: Execute an order through TWS
+  - GET `/api/options/orders` - Get orders with optional filters
+  - POST `/api/options/order` - Create a new order
+  - DELETE `/api/options/order/<order_id>` - Cancel an order
+  - PUT `/api/options/order/<order_id>` - Update an order status
+  - POST `/api/options/execute/<order_id>` - Execute an order through TWS
+
+- **Stock Data**:
+  - GET `/api/stock/<ticker>` - Get stock price and basic data
 
 ### Web Interface
 
 The web interface consists of four main pages:
 
-1. **Dashboard**: Overview of your portfolio and key metrics
-   - Includes a table of pending orders that can be executed or cancelled
-2. **Portfolio**: Detailed view of all positions
-3. **Options**: Option chain analysis for selected tickers
-4. **Recommendations**: Trade recommendations based on your strategy
+1. **Dashboard** (http://localhost:5000/): Overview of your portfolio and key metrics
+2. **Portfolio** (http://localhost:5000/portfolio): Detailed view of all positions
+3. **Options** (http://localhost:5000/options?ticker=SYMBOL): Option chain analysis
+4. **Recommendations** (http://localhost:5000/recommendations): Trade recommendations
 
-## Order Management
-
-The application now supports a complete order workflow:
-
-1. **Creating Orders**: Orders are created from recommendations or manually
-2. **Viewing Orders**: All orders are visible in the dashboard with their status
-3. **Cancelling Orders**: Pending orders can be cancelled from the dashboard
-4. **Executing Orders**: Pending orders can be executed directly through TWS
-5. **Order Status**: Orders have different statuses (pending, processing, completed, cancelled)
-
-## Development
-
-### Project Structure
+## Project Structure
 
 ```
-auto-trader/
+AllYouNeedIsWheel/
 ├── api/                      # Flask API backend
+│   ├── __init__.py           # API initialization and factory function
 │   ├── routes/               # API route modules
-│   └── services/             # Business logic for API
-├── autotrader/               # Core library 
-│   ├── core/                 # Trading functionality
-│   ├── db/                   # Database operations
-│   └── strategies/           # Trading strategies
+│   ├── services/             # Business logic for API
+│   └── models/               # Data models
+├── core/                     # Core trading functionality
+│   ├── __init__.py
+│   ├── connection.py         # Interactive Brokers connection handling
+│   ├── logging_config.py     # Logging configuration
+│   └── utils.py              # Utility functions
+├── db/                       # Database operations
+│   ├── __init__.py
+│   └── database.py           # SQLite database wrapper
 ├── frontend/                 # Frontend web application
 │   ├── static/               # Static assets (CSS, JS)
 │   └── templates/            # Jinja2 HTML templates
-├── app.py                    # Main application entry point
+├── logs/                     # Log files directory
+├── app.py                    # Main Flask application entry point
+├── run_api.py                # Production API server runner with Gunicorn
+├── config.py                 # Configuration handling
+├── connection.json           # IB connection configuration (paper trading)
+├── connection_real.json      # IB connection configuration (real money)
+├── connection.json.example   # Example configuration template
+├── options_dev.db            # Development database (SQLite)
 ├── requirements.txt          # Python dependencies
-├── connection.json.example   # Example connection configuration
-└── README.md                 # Documentation
+└── .gitignore                # Git ignore rules
 ```
+
+## Development
+
+### Adding New Features
+
+1. For backend changes, add routes in `api/routes/` and implement business logic in `api/services/`
+2. For frontend changes, modify the templates in `frontend/templates/` and static assets in `frontend/static/`
+3. For database changes, update the schema and queries in `db/database.py`
+
+### Database
+
+The application uses SQLite for storage. Two database files are maintained:
+- `options_dev.db` - For development/testing
+- `options_prod.db` - For production use
+
+## Troubleshooting
+
+### Connection Issues
+
+- Ensure TWS or IB Gateway is running and API connections are enabled
+- Verify the correct port (7496 for TWS, 7497 for IB Gateway)
+- Check that the client ID is not already in use
+- Confirm you have the right market data subscriptions for options
+
+### Common Errors
+
+- "Socket Connection Broken": TWS/IB Gateway is not running
+- "Client ID already in use": Another application is using the same client ID
+- "No market data permissions": You need to subscribe to market data for the securities you're requesting
+
+## Security Notes
+
+- Never commit `connection_real.json` to version control (it's in `.gitignore`)
+- Always use `readonly: true` during development to prevent accidental order execution
+- Use caution when running with the `--realmoney` flag as real trades can be executed
 
 ## License
 
@@ -135,6 +193,6 @@ auto-trader/
 
 ## Acknowledgments
 
-- Interactive Brokers API for Python
-- Flask web framework
-- Bootstrap CSS framework
+- [IB Insync](https://github.com/erdewit/ib_insync) for Interactive Brokers API integration
+- [Flask](https://flask.palletsprojects.com/) for the web framework
+- [Gunicorn](https://gunicorn.org/) for WSGI HTTP server
